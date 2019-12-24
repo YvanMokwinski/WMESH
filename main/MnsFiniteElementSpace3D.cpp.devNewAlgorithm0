@@ -1,0 +1,776 @@
+#if 0
+#include "Memory.h"
+#endif
+#include "Err.h"
+
+#include <valarray>
+#include "MeshVolumeSpace.hpp"
+#include "MeshVolume2Dof.hpp"
+
+#include "TimeMeasure.h"
+#include "CompressedSequenceStorage.hpp"
+#include "FullSequenceStorage.hpp"
+#include "FiniteElementSpace.hpp"
+#include "MeshVolumeSpace.hpp"
+
+#include "Logging/Error.hpp"
+#include "Logging/Warning.hpp"
+#include "Program.hpp"
+
+bool AreSameEdge(const I cncedge[],
+	      const I cncedge2[])
+{
+  return ( ( (cncedge[0] == cncedge2[0]) && (cncedge[1] == cncedge2[1]) )
+	   ||
+	   ( (cncedge[1] == cncedge2[0]) && (cncedge[0] == cncedge2[1]) ) );
+  
+}
+
+I ComputeHashEdge(const I numCells_,
+		  const I cncedge_[])
+{
+  I h = ( (cncedge_[0] < cncedge_[1]) ? cncedge_[0] : cncedge_[1] ) % numCells_;
+  if (h<0)
+    h *= -1;
+  return h;
+};
+
+
+void HalfEdgeDecomposition(const I halfEdgeIndex_,
+			   const I numDofsPerCell_,
+			   const I numDofsPerInteriorEdge_,
+			   I* cellIndex_,
+			   I* localEdgeIndex_)
+{
+  cellIndex_[0] = halfEdgeIndex_ / numDofsPerCell_;
+  localEdgeIndex_[0] = ( halfEdgeIndex_ % numDofsPerCell_ ) / numDofsPerInteriorEdge_;
+
+  if (localEdgeIndex_[0]<0 || localEdgeIndex_[0] >=6)
+    {
+      std::cerr << "error"<< std::endl;
+      exit(1);
+    }
+}
+
+void GetCellToNodes(cst_pI cellsToNodes_,const I cellIndex_,I cnc_[4])
+{
+  for (I localNodeIndex=0;localNodeIndex<4;++localNodeIndex)
+    {
+      cnc_[localNodeIndex] = cellsToNodes_[4*cellIndex_+localNodeIndex];
+    }
+}
+
+
+void GetEdgeToNodes(const I 	cnc_[4],
+		    const I 	localEdgeIndex_,
+		    I 		cncedge_[2])		    
+{
+  static const I tetraedge_cnc[] = { 1,2,
+				     2,0,
+				     0,1,
+				     2,3,
+				     0,3,
+				     1,3};			
+  cncedge_[0] = cnc_[tetraedge_cnc[localEdgeIndex_*2+0]];
+  cncedge_[1] = cnc_[tetraedge_cnc[localEdgeIndex_*2+1]];
+};
+
+
+void GenerateFiniteElementSpace(int 	degree_,
+				const I numCells_,
+				cst_pI 	cellsToNodes_)
+{
+  const int numDofsPerCell = ((degree_+1)*(degree_+2)*(degree_+3))/6;
+  const int numDofsPerInteriorEdge = (degree_>0) ? degree_-1 : 0;  
+  const int numDofsPerInteriorFace = (degree_>2) ? ((degree_-1)*(degree_-2))/2 : 0;
+  const int numDofsPerInteriorVolume = numDofsPerCell - 4 - 6 * numDofsPerInteriorEdge - 4 * numDofsPerInteriorFace;
+  // 3 -> 1
+  // 4 -> 3
+  // 5 ->
+
+  // x
+  // x x
+  // x x x
+  // x x x x
+  // x x x x x
+  // x x x x x x
+  //
+
+  std::cout << "numDofsPerCell           " << numDofsPerCell           << std::endl;
+  std::cout << "numDofsPerInteriorEdge   " << numDofsPerInteriorEdge   << std::endl;
+  std::cout << "numDofsPerInteriorFace   " << numDofsPerInteriorFace   << std::endl;
+  std::cout << "numDofsPerInteriorVolume " << numDofsPerInteriorVolume << std::endl;
+
+  pI cellsToDofs = new I[numCells_ * numDofsPerCell];
+
+  I numVertices = 0;
+  I edgeIndex = 0;
+  I dofIndex = 0;
+  //
+  // Set dofs over the vertices
+  //
+  for (I i=0;i<numCells_;++i)
+    {
+      for (I j=0;j<4;++j)
+	{
+	  cellsToDofs[numDofsPerCell*i+j] = cellsToNodes_[4*i+j];
+	  if (cellsToDofs[numDofsPerCell*i+j] > numVertices)
+	    numVertices = cellsToDofs[numDofsPerCell*i+j];
+	}      
+    }
+  ++numVertices;
+  dofIndex = numVertices;
+  //
+  //
+  // 
+  
+  //
+  // Set dofs over the edges.
+  //
+  {
+
+    static const I tetraface_cnc[] = {1,2,3,
+				      2,0,3,
+				      0,1,3,
+				      0,2,1};
+    
+    //
+    //
+    //
+    
+    const I default_hash = -1000000;
+    //
+    // mark edge
+    //
+    for (I i=0;i<numCells_;++i)
+      {
+	for (I j=0;j<6;++j)
+	  {
+	    //
+	    // only the first dof on edge.
+	    //
+	    cellsToDofs[numDofsPerCell*i+ 4 + numDofsPerInteriorEdge*j+0] = 777777777;//default_hash;
+	  }      
+      }
+
+
+    pI link = new I[numCells_];
+    for (I i=0;i<numCells_;++i)
+      {
+	link[i] = default_hash;
+      }
+    
+    for (I cellIndex=0;cellIndex<numCells_;++cellIndex)
+      {
+
+	//
+	// Copy connectivity.
+	//
+	I cnc[4];
+	GetCellToNodes(cellsToNodes_,
+		       cellIndex,
+		       cnc);
+
+	for (I localEdgeIndex=0;localEdgeIndex<6;++localEdgeIndex)
+	  {
+	    I cncedge[2];
+	    GetEdgeToNodes(cnc,
+			   localEdgeIndex,
+			   cncedge);
+
+	    //
+	    // hash
+	    //
+	    const I hash = ComputeHashEdge(numCells_,
+					   cncedge);
+	    
+	    cellsToDofs[numDofsPerCell*cellIndex + 4 + numDofsPerInteriorEdge*localEdgeIndex + 0] = link[hash];
+	    link[hash] = -(numDofsPerCell*cellIndex+ 4 + numDofsPerInteriorEdge*localEdgeIndex + 0);
+	  }	
+      }
+
+
+#if 0
+    std::cout << "BEDFORE " << std::endl;
+    for (I cellIndex=0;cellIndex<numCells_;++cellIndex)
+      {
+
+	for (I j=0;j<6;++j)
+	  {
+	    for (I k = 0;k<numDofsPerInteriorEdge;++k)
+	      {
+		//
+		// only the first dof on edge.
+		//
+		std::cout << " " << cellsToDofs[numDofsPerCell*cellIndex + 4 + numDofsPerInteriorEdge*j+k];
+	      }
+	  }      
+	std::cout << std::endl;
+      }
+#endif
+    
+    I interiorDofs[128];
+    for (I cellIndex=numCells_-1;cellIndex>=0;--cellIndex)
+      {
+
+	I cnc[4];
+	GetCellToNodes(cellsToNodes_,
+		       cellIndex,
+		       cnc);
+	
+	std::cout << "cellIndex "  << cellIndex << std::endl;
+	for (I localEdgeIndex=6-1;localEdgeIndex>=0;--localEdgeIndex)
+	  { 
+	    std::cout << "localEdgeIndex "  << localEdgeIndex << std::endl;
+	    
+	    I cncedge[2];
+	    GetEdgeToNodes(cnc,
+			   localEdgeIndex,
+			   cncedge);
+	    
+	    const I hash = ComputeHashEdge(numCells_,
+					   cncedge);
+	    
+#if 0
+	    std::cout << "cellIndex2 "  << (-nextHalfEdgeIndex-4)/numDofsPerCell << std::endl;
+	    std::cout << "localEdgeIndex2 "  << ( (-nextHalfEdgeIndex-4)%numDofsPerCell)/numDofsPerInteriorEdge << std::endl;
+#endif
+	    
+	    I initialHalfEdgeIndex = -(numDofsPerCell*cellIndex+4+numDofsPerInteriorEdge*localEdgeIndex+0);
+
+	    std::cout << "   initial " << initialHalfEdgeIndex << std::endl;
+	    if (cellsToDofs[-initialHalfEdgeIndex]<0)
+	      {
+		++edgeIndex;
+		bool edgeNegative = (cncedge[0] < cncedge[1]);
+		//
+		// that's the first visit of the edge
+		//
+		if (edgeNegative)
+		  {
+		    // we assign the dofs over the edge
+		    for (I i=0;i<numDofsPerInteriorEdge;++i)
+		      {
+			interiorDofs[i] = ++dofIndex;
+		      }		    
+		  }
+		else
+		  {
+		    // we assign the dofs over the edge
+		    for (I i=numDofsPerInteriorEdge-1;i>=0;--i)
+		      {
+			interiorDofs[i] = ++dofIndex;
+		      }	
+		  }
+
+#if 0
+		std::cout << "interior dofs" << std::endl;
+		for (I i=0;i<numDofsPerInteriorEdge;++i)
+		  {
+		    std::cout << " " << interiorDofs[i];
+		  }	
+		std::cout <<std::endl;
+#endif
+		
+		I previousHalfEdgeIndex = initialHalfEdgeIndex;
+		I nextHalfEdgeIndex = cellsToDofs[-initialHalfEdgeIndex];
+		//		std::cout << "    #### initialHalfEdgeIndex "  << initialHalfEdgeIndex << std::endl;
+		//		std::cout << "    #### nextHalfEdgeIndex "  << nextHalfEdgeIndex << std::endl;
+		
+		for (I i=0;i<numDofsPerInteriorEdge;++i)
+		  {
+		    cellsToDofs[numDofsPerCell*cellIndex+4+numDofsPerInteriorEdge*localEdgeIndex+i] = interiorDofs[i];
+		  }
+
+
+	std::cout << "current assignment " << std::endl;
+	for (I j=0;j<6;++j)
+	  {
+	    for (I k = 0;k<numDofsPerInteriorEdge;++k)
+	      {
+		//
+		// only the first dof on edge.
+		//
+		std::cout << " " << cellsToDofs[numDofsPerCell*cellIndex+ 4 + numDofsPerInteriorEdge*j+k];
+	      }
+	  }      
+	std::cout << std::endl;
+
+		
+		I lastDifferentEdge = -123456789;
+		while (nextHalfEdgeIndex < 0 && nextHalfEdgeIndex != default_hash)
+		  {
+
+		    std::cout << "      current "<< nextHalfEdgeIndex << std::endl;
+		    I cellIndex2;
+		    I localEdgeIndex2;
+#if 0
+		    std::cout << "    #### -nextHalfEdgeIndex-4 "  << -nextHalfEdgeIndex - 4 << std::endl;
+		    std::cout << "    #### cellIndex2 "  << (-nextHalfEdgeIndex-4)/numDofsPerCell << std::endl;
+		    std::cout << "    ##### localEdgeIndex2 "  << ( (-nextHalfEdgeIndex-4)%numDofsPerCell)/numDofsPerInteriorEdge << std::endl;
+#endif
+		    HalfEdgeDecomposition(-nextHalfEdgeIndex - 4,
+					  numDofsPerCell,
+					  numDofsPerInteriorEdge,
+					  &cellIndex2,
+					  &localEdgeIndex2);
+		    std::cout << "      cellIndex2 "  << cellIndex2 << std::endl;
+		    std::cout << "      localEdgeIndex2 "  << localEdgeIndex2 << std::endl << std::endl;
+		    
+		    I nextHalfEdgeIndexBackup = nextHalfEdgeIndex;		    
+		    nextHalfEdgeIndex = cellsToDofs[-nextHalfEdgeIndex];
+
+		    I cnc2[4];
+		    GetCellToNodes(cellsToNodes_,
+				   cellIndex2,
+				   cnc2);
+		    
+		    I cncedge2[2];
+		    GetEdgeToNodes(cnc2,
+				   localEdgeIndex2,
+				   cncedge2);
+		    
+		    const I hash2 = ComputeHashEdge(numCells_,
+						    cncedge2);
+
+		    bool edgeNegative2 = (cncedge2[0] < cncedge2[1]);
+		    if (hash==hash2)
+		      {
+			bool areSameEdge = AreSameEdge(cncedge,cncedge2);			
+			if (areSameEdge)
+			  {
+		    //
+			    // this is the same edge.
+			    //
+			    
+			    //
+			    // before doing this, we need to be sure that we restore the link.
+			    //
+			    // i.e. if the previous analyzed edge was not the same edge
+			    // then we have to update 
+			    //
+
+			    std::cout << "sameedge" << std::endl;
+			    if (lastDifferentEdge != -123456789)
+			      {
+				std::cout << "update " << previousHalfEdgeIndex << " from " << nextHalfEdgeIndex << std::endl;
+				cellsToDofs[-lastDifferentEdge] = nextHalfEdgeIndex;
+			      }
+			    
+			    if (edgeNegative == edgeNegative2)
+			      {
+				// we copy 
+				for (I i=0;i<numDofsPerInteriorEdge;++i)
+				  {
+				    cellsToDofs[numDofsPerCell*cellIndex2+4+numDofsPerInteriorEdge*localEdgeIndex2+i] = interiorDofs[i];
+				  }
+			      }
+			    else
+			      {
+				// we copy reverse
+				for (I i=0;i<numDofsPerInteriorEdge;++i)
+				  {
+				    cellsToDofs[numDofsPerCell*cellIndex2+4+numDofsPerInteriorEdge*localEdgeIndex2+i] = interiorDofs[numDofsPerInteriorEdge-1-i];
+				  }
+			      }
+
+			  }
+			else
+			  {
+			    //
+			    // this is NOT the same edge.
+			    //
+			    lastDifferentEdge = nextHalfEdgeIndexBackup;
+			  }
+		      }
+		    else
+		      {
+			//
+			// this is the same edge.
+			//
+			lastDifferentEdge = nextHalfEdgeIndexBackup;
+		      }
+
+		    previousHalfEdgeIndex = nextHalfEdgeIndexBackup;
+		    
+		  }		
+	      }
+	  }
+
+
+      }
+
+
+  }
+
+	std::cout << "edge table " << std::endl;
+
+    //
+    // mark edge
+    //
+    for (I i=0;i<numCells_;++i)
+      {
+	for (I j=0;j<6;++j)
+	  {
+	    for (I k = 0;k<numDofsPerInteriorEdge;++k)
+	      {
+		//
+		// only the first dof on edge.
+		//
+		std::cout << " " << cellsToDofs[numDofsPerCell*i+ 4 + numDofsPerInteriorEdge*j+k];
+	      }
+	  }      
+	std::cout << std::endl;
+      }
+
+
+  
+  delete[]cellsToDofs;
+  
+};
+
+
+template <typename C> void apply(CRTP_ISequenceStorage<C>& r)
+{
+
+  for (int i=0;i<9000000;++i)
+    {
+      auto v = r(0,0);
+      v+=2;
+      r(0,0)=v;
+      //r.Set(0,0,v);
+    }
+};
+
+
+class MnsFiniteElementSpace3D : public Program
+{
+  I m_degree;
+public:
+
+  
+  MnsFiniteElementSpace3D(int 		argc,
+			  char * 	argv[]) : Program(argc,argv,true)
+  {
+
+
+    
+
+    this->AddOption(new Option<I>(&m_degree,"-k",2,true,"Lagrange"));
+  };
+
+  template <typename _derivedClass> CRTP_ISequenceStorage<_derivedClass>* Get()
+  {
+    I in[]  = {15,16,17,10,13,12,11};
+    I s[]  = {0,4,6,7};
+    return new _derivedClass(3,in,s);
+  };
+  
+  virtual void Main()
+
+  {
+
+    MemoryContext memcontext;
+
+    if (this->HasVerbose())
+      {
+	
+	LogMessage  << "degree " 	<< m_degree << endl;
+	LogMessage  << "ofilename " << this->GetOfilename() << endl;
+      }
+#if 0    
+    if (this->HasVerbose())
+      {
+	Logging::Message::Get()  << "ifilename " << this->GetInputFilename(0) << endl;
+      }
+#endif
+
+
+
+
+
+
+
+
+    
+    
+    MemoryContext_def(&memcontext,
+		      0,
+		      777,
+		      MemoryType_STD);  
+
+    if (Mpi::IsMaster())
+      {
+	// const unsigned int numIfilenames = this->GetNumInputFiles();
+	pMedit medit = Medit_new(this->GetInputFilename(0).c_str());
+
+
+
+	
+	auto mesh = new MeshVolume(&memcontext,
+				   __ePrecision_DOUBLE,
+				   medit);
+
+	const auto& topology = mesh->GetTopology();
+	std::cout << "1##############################" << std::endl;
+	const std::array<const MeshVolumeCollection*,__eVolume_ALL>& cncs= topology.GetConnectivities();
+	std::cout << "2##############################" << std::endl;
+	
+	I size_cellsToNodes = 0;
+	{ eVolume v = __eVolume_ERROR;
+	  for (++v; v < __eVolume_ALL;++v)
+	    {
+	      if (NULL != cncs[v])
+		{
+		  size_cellsToNodes += cncs[v]->GetNbVolumes() * cncs[v]->GetNbNodesInVolume();
+		}
+	    } }
+	
+	std::cout << "##############################" << std::endl;
+#if 1
+	I next=0;
+	std::cout << size_cellsToNodes << std::endl;
+	pI cellsToNodes = new I[size_cellsToNodes];
+	{ eVolume v = __eVolume_ERROR;
+	  for (++v; v < __eVolume_ALL;++v)
+	    {
+	      if (NULL != cncs[v])
+		{		  
+		  I cellToNodes[8];
+		  const I nbVolumes = cncs[v]->GetNbVolumes();
+#if 1
+		  for (I cellIndex=0;cellIndex<nbVolumes;++cellIndex)
+		    {
+		      I idTopology;
+		      cncs[v]->GetVolumeCoordinates	(cellIndex,
+							 &idTopology,
+							 cellToNodes);
+		      const I nbNodesInVolume = cncs[v]->GetNbNodesInVolume();
+		      for (int k=0;k<nbNodesInVolume;++k)
+			{
+			  cellsToNodes[next++] = cellToNodes[k];
+			}		      
+		    }
+#endif
+		}
+	    } }
+#endif
+	{
+	  const I nbVolumes = cncs[__eVolume_TETRAHEDRON]->GetNbVolumes();
+	  for (I cellIndex=0;cellIndex<nbVolumes;++cellIndex)
+	    {
+	      for (int k=0;k<4;++k)
+		{
+		  std::cout << " " << cellsToNodes[4*cellIndex+k];
+		}
+	      std::cout << std::endl;
+	    }	  
+	
+
+	GenerateFiniteElementSpace(3,nbVolumes,cellsToNodes);
+	}
+#if 0
+	GenerateFiniteElementSpace(4,cellsToNodes);
+	GenerateFiniteElementSpace(5,cellsToNodes);
+#endif
+	
+
+	
+
+	
+	exit(1);
+	
+	std::cout << "##############################" << std::endl;
+	
+	
+	medit = Medit_kill(medit);
+	
+	std::cout << "allo " << std::endl;
+	mesh->BuildAdjacencies(NULL);
+	std::cout << "allo done" << std::endl;
+	
+
+	
+	std::cout << "space " << std::endl;
+	auto space = MeshVolumeSpaceFactory::Create(mesh,m_degree);
+	std::cout << "space done." << std::endl;
+	std::cout << "write " << std::endl;
+	space->WriteMedit(this->GetOfilename().c_str());
+	std::cout << "write2 " << std::endl;
+
+	
+	delete space;
+	
+	delete mesh;
+	
+      }
+
+#if 1
+
+#endif    
+
+  };
+};
+
+static constexpr std::array<std::array<int,3>,3> t{
+  std::array<int,3>{{1,2,3}},
+    std::array<int,3>{{4,5,6}},
+      std::array<int,3>{{7,8,9}}};
+
+template <int i> void dd()
+{
+  std::cout << i << std::endl;
+}
+
+#include "ReferenceCell/TopologicalDimension.hpp"
+#include "ReferenceCell/FaceType.hpp"
+#include "ReferenceCell/VolumeType.hpp"
+#include "ReferenceCell/Volume/Wedge.hpp"
+
+
+template <ReferenceCell::VolumeType::EnumType v> void print()
+{
+  std::cout << "yo " << v << std::endl;
+};
+
+
+#define MAC(_body)							\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Tetrahedron; \
+    _body;								\
+  }									\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Wedge; \
+    _body;								\
+  }									\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Pyramid; \
+    _body;								\
+  }									\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Hexahedron; \
+    _body;								\
+  }									
+
+
+template <ReferenceCell::VolumeType::EnumType v> void Loop()
+{
+  std::cout << "yoddd " << v << std::endl;
+  Loop<static_cast<ReferenceCell::VolumeType::EnumType>(v+1)>();
+};
+
+template <> void Loop<ReferenceCell::VolumeType::NOTHING>()
+{
+};
+
+
+#if 0
+template <int First, int Last>
+struct static_for
+{
+  template <typename Fn>
+  void operator()(Fn const& fn) const
+  {
+    if (First < Last)
+      {
+	std::cout << "roger" << std::endl;
+	fn(First);
+	static_for<First+1, Last>()(fn);
+      }
+  }
+};
+
+template <int N>
+struct static_for<N, N>
+{
+  template <typename Fn>
+  void operator()(Fn const& fn) const
+  { }
+};
+
+void vv(int i)
+{
+  std::cout << "cono " << i << std::endl;
+}
+#endif
+
+template <int First, int Last>
+struct static_for
+{
+  template <typename Lambda>
+  static inline constexpr void apply(Lambda const& f)
+  {
+    if (First < Last)
+      {
+	f(std::integral_constant<int, First>{});
+	static_for<First + 1, Last>::apply(f);
+      }
+  }
+};
+template <int N>
+struct static_for<N, N>
+{
+  template <typename Lambda>
+  static inline constexpr void apply(Lambda const& f) {}
+};
+
+
+template <typename T,long unsigned int N> void dd(const std::array<T,N>&a,
+						  const std::array<T,N>&b,
+						  std::array<T,N>&c)
+{
+  std::cout << N << std::endl;
+};
+
+template <typename T,long unsigned int N> std::array<T,N>& operator+=(const std::array<T,N>&a,
+								    const std::array<T,N>&b)
+{
+  std::array<T,N> c = a;
+  for (unsigned int n = 0;n<N;++n)
+    c[n] = a[n] + b[n];
+  return c;
+};
+
+int main(int 	argc_, 
+	 char* argv_[])
+{
+  
+  MAC({ print<expr>(); });
+
+
+  static_for<0,3>::apply([&](int i){std::cout << "conooo " << i << std::endl;});
+  Loop<ReferenceCell::VolumeType::Tetrahedron>();
+
+
+
+  
+  
+  for (const auto topologicalDimension : ReferenceCell::TopologicalDimension::AllEnumTypes)
+    {
+      std::cout << topologicalDimension << std::endl;
+    }
+  for (const auto faceType : ReferenceCell::FaceType::AllEnumTypes)
+    {
+      std::cout << faceType << std::endl;
+    }
+  for (const auto volumeType : ReferenceCell::VolumeType::AllEnumTypes)
+    {
+      std::cout << volumeType << std::endl;
+    }
+  
+  for (const auto i : ReferenceCell::Volume::Wedge::LocalQuadrilateralFaceIndices)
+    {      
+      std::cout << i << std::endl;
+    }
+
+  dd<t[1][0]>();
+  MnsFiniteElementSpace3D application(argc_,argv_);
+  application.Run();
+  return 0;
+}
+
+
+
+
+
+

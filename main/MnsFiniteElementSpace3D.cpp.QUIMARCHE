@@ -1,0 +1,340 @@
+#if 0
+#include "Memory.h"
+#endif
+#include "Err.h"
+
+#include <valarray>
+#include "MeshVolumeSpace.hpp"
+#include "MeshVolume2Dof.hpp"
+
+#include "TimeMeasure.h"
+#include "CompressedSequenceStorage.hpp"
+#include "FullSequenceStorage.hpp"
+#include "FiniteElementSpace.hpp"
+#include "MeshVolumeSpace.hpp"
+
+#include "Logging/Error.hpp"
+#include "Logging/Warning.hpp"
+#include "Program.hpp"
+
+template <typename C> void apply(CRTP_ISequenceStorage<C>& r)
+{
+
+  for (int i=0;i<9000000;++i)
+    {
+      auto v = r(0,0);
+      v+=2;
+      r(0,0)=v;
+      //r.Set(0,0,v);
+    }
+};
+
+
+class MnsFiniteElementSpace3D : public Program
+{
+  I m_degree;
+public:
+
+  
+  MnsFiniteElementSpace3D(int 		argc,
+			  char * 	argv[]) : Program(argc,argv,true)
+  {
+
+
+    
+
+    this->AddOption(new Option<I>(&m_degree,"-k",2,true,"Lagrange"));
+  };
+
+  template <typename _derivedClass> CRTP_ISequenceStorage<_derivedClass>* Get()
+  {
+    I in[]  = {15,16,17,10,13,12,11};
+    I s[]  = {0,4,6,7};
+    return new _derivedClass(3,in,s);
+  };
+  
+  virtual void Main()
+
+  {
+
+    MemoryContext memcontext;
+
+    if (this->HasVerbose())
+      {
+	
+	LogMessage  << "degree " 	<< m_degree << endl;
+	LogMessage  << "ofilename " << this->GetOfilename() << endl;
+      }
+#if 0    
+    if (this->HasVerbose())
+      {
+	Logging::Message::Get()  << "ifilename " << this->GetInputFilename(0) << endl;
+      }
+#endif
+
+
+
+
+
+
+
+
+    
+    
+    MemoryContext_def(&memcontext,
+		      0,
+		      777,
+		      MemoryType_STD);  
+
+    if (Mpi::IsMaster())
+      {
+	// const unsigned int numIfilenames = this->GetNumInputFiles();
+	pMedit medit = Medit_new(this->GetInputFilename(0).c_str());
+
+
+
+	
+	auto mesh = new MeshVolume(&memcontext,
+				   __ePrecision_DOUBLE,
+				   medit);
+
+	const auto& topology = mesh->GetTopology();
+	std::cout << "1##############################" << std::endl;
+	const std::array<const MeshVolumeCollection*,__eVolume_ALL>& cncs= topology.GetConnectivities();
+	std::cout << "2##############################" << std::endl;
+	
+	I size_cellsToNodes = 0;
+	{ eVolume v = __eVolume_ERROR;
+	  for (++v; v < __eVolume_ALL;++v)
+	    {
+	      if (NULL != cncs[v])
+		{
+		  size_cellsToNodes += cncs[v]->GetNbVolumes() * cncs[v]->GetNbNodesInVolume();
+		}
+	    } }
+	
+	std::cout << "##############################" << std::endl;
+#if 1
+	I next=0;
+	std::cout << size_cellsToNodes << std::endl;
+	pI cellsToNodes = new I[size_cellsToNodes];
+	{ eVolume v = __eVolume_ERROR;
+	  for (++v; v < __eVolume_ALL;++v)
+	    {
+	      if (NULL != cncs[v])
+		{		  
+		  I cellToNodes[8];
+		  const I nbVolumes = cncs[v]->GetNbVolumes();
+#if 1
+		  for (I cellIndex=0;cellIndex<nbVolumes;++cellIndex)
+		    {
+		      I idTopology;
+		      cncs[v]->GetVolumeCoordinates	(cellIndex,
+							 &idTopology,
+							 cellToNodes);
+		      const I nbNodesInVolume = cncs[v]->GetNbNodesInVolume();
+		      for (int k=0;k<nbNodesInVolume;++k)
+			{
+			  cellsToNodes[next++] = cellToNodes[k];
+			}		      
+		    }
+#endif
+		}
+	    } }
+#endif
+
+	
+	std::cout << "##############################" << std::endl;
+	
+	
+	medit = Medit_kill(medit);
+	
+	std::cout << "allo " << std::endl;
+	mesh->BuildAdjacencies(NULL);
+	std::cout << "allo done" << std::endl;
+	
+
+	
+	std::cout << "space " << std::endl;
+	auto space = MeshVolumeSpaceFactory::Create(mesh,m_degree);
+	std::cout << "space done." << std::endl;
+	std::cout << "write " << std::endl;
+	space->WriteMedit(this->GetOfilename().c_str());
+	std::cout << "write2 " << std::endl;
+
+	
+	delete space;
+	
+	delete mesh;
+	
+      }
+
+#if 1
+
+#endif    
+
+  };
+};
+
+static constexpr std::array<std::array<int,3>,3> t{
+  std::array<int,3>{{1,2,3}},
+    std::array<int,3>{{4,5,6}},
+      std::array<int,3>{{7,8,9}}};
+
+template <int i> void dd()
+{
+  std::cout << i << std::endl;
+}
+
+#include "ReferenceCell/TopologicalDimension.hpp"
+#include "ReferenceCell/FaceType.hpp"
+#include "ReferenceCell/VolumeType.hpp"
+#include "ReferenceCell/Volume/Wedge.hpp"
+
+
+template <ReferenceCell::VolumeType::EnumType v> void print()
+{
+  std::cout << "yo " << v << std::endl;
+};
+
+
+#define MAC(_body)							\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Tetrahedron; \
+    _body;								\
+  }									\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Wedge; \
+    _body;								\
+  }									\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Pyramid; \
+    _body;								\
+  }									\
+  {									\
+    static constexpr ReferenceCell::VolumeType::EnumType expr =ReferenceCell::VolumeType::Hexahedron; \
+    _body;								\
+  }									
+
+
+template <ReferenceCell::VolumeType::EnumType v> void Loop()
+{
+  std::cout << "yoddd " << v << std::endl;
+  Loop<static_cast<ReferenceCell::VolumeType::EnumType>(v+1)>();
+};
+
+template <> void Loop<ReferenceCell::VolumeType::NOTHING>()
+{
+};
+
+
+#if 0
+template <int First, int Last>
+struct static_for
+{
+  template <typename Fn>
+  void operator()(Fn const& fn) const
+  {
+    if (First < Last)
+      {
+	std::cout << "roger" << std::endl;
+	fn(First);
+	static_for<First+1, Last>()(fn);
+      }
+  }
+};
+
+template <int N>
+struct static_for<N, N>
+{
+  template <typename Fn>
+  void operator()(Fn const& fn) const
+  { }
+};
+
+void vv(int i)
+{
+  std::cout << "cono " << i << std::endl;
+}
+#endif
+
+template <int First, int Last>
+struct static_for
+{
+  template <typename Lambda>
+  static inline constexpr void apply(Lambda const& f)
+  {
+    if (First < Last)
+      {
+	f(std::integral_constant<int, First>{});
+	static_for<First + 1, Last>::apply(f);
+      }
+  }
+};
+template <int N>
+struct static_for<N, N>
+{
+  template <typename Lambda>
+  static inline constexpr void apply(Lambda const& f) {}
+};
+
+
+template <typename T,long unsigned int N> void dd(const std::array<T,N>&a,
+						  const std::array<T,N>&b,
+						  std::array<T,N>&c)
+{
+  std::cout << N << std::endl;
+};
+
+template <typename T,long unsigned int N> std::array<T,N>& operator+=(const std::array<T,N>&a,
+								    const std::array<T,N>&b)
+{
+  std::array<T,N> c = a;
+  for (unsigned int n = 0;n<N;++n)
+    c[n] = a[n] + b[n];
+  return c;
+};
+
+int main(int 	argc_, 
+	 char* argv_[])
+{
+  
+  MAC({ print<expr>(); });
+
+
+  static_for<0,3>::apply([&](int i){std::cout << "conooo " << i << std::endl;});
+  Loop<ReferenceCell::VolumeType::Tetrahedron>();
+
+
+
+  
+  
+  for (const auto topologicalDimension : ReferenceCell::TopologicalDimension::AllEnumTypes)
+    {
+      std::cout << topologicalDimension << std::endl;
+    }
+  for (const auto faceType : ReferenceCell::FaceType::AllEnumTypes)
+    {
+      std::cout << faceType << std::endl;
+    }
+  for (const auto volumeType : ReferenceCell::VolumeType::AllEnumTypes)
+    {
+      std::cout << volumeType << std::endl;
+    }
+  
+  for (const auto i : ReferenceCell::Volume::Wedge::LocalQuadrilateralFaceIndices)
+    {      
+      std::cout << i << std::endl;
+    }
+
+  dd<t[1][0]>();
+  MnsFiniteElementSpace3D application(argc_,argv_);
+  application.Run();
+  return 0;
+}
+
+
+
+
+
+

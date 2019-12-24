@@ -1,0 +1,206 @@
+#pragma once
+
+#include "Config.hpp"
+#include <array>
+
+template <long unsigned int _dimension,
+	  typename _real_t>
+struct Point : public std::array<_real_t,_dimension>
+{
+private: using parent_t = std::array<_real_t,_dimension>;
+
+public: using real_t = _real_t;
+public: int_t m_cod{0};
+  
+public: inline Point() noexcept
+  {
+  };  
+
+public: inline typename parent_t::size_type GetSize() const noexcept
+  {
+    return this->size();
+  };  
+
+public: inline int_t GetCod() const noexcept
+  {
+    return m_cod;
+  };
+  
+public: inline void SetCod(const int_t cod_) noexcept
+  {
+    m_cod = cod_;
+  };
+public: inline Point(const _real_t x_,
+		       const _real_t y_,
+		       const _real_t z_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    (*this)[2] = z_;
+  };
+  
+public: inline Point(const _real_t x_,
+		     const _real_t y_,
+		     const _real_t z_,
+		     const int_t cod_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    (*this)[2] = z_;
+    this->SetCod(cod_);
+  };
+  
+};
+
+
+#if 0
+template <typename _real_t>
+struct Point<3,_real_t> : public std::array<_real_t,3>
+{
+private: using parent_t = std::array<_real_t,3>;
+
+public: using real_t = _real_t;
+public: int_t m_cod{0};
+
+
+public: inline Point(){};
+public: inline Point(const _real_t x_,
+		       const _real_t y_,
+		       const _real_t z_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    (*this)[2] = z_;
+  };
+  
+public: inline Point(const _real_t x_,
+		     const _real_t y_,
+		     const _real_t z_,
+		     const int_t cod_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    (*this)[2] = z_;
+    this->SetCod(cod_);
+  };
+
+public: inline typename parent_t::size_type GetSize() const noexcept
+  {
+    return this->size();
+  };  
+
+public: inline int_t GetCod() const noexcept
+  {
+    return m_cod;
+  };
+  
+public: inline void SetCod(const int_t cod_) noexcept
+  {
+    m_cod = cod_;
+  };
+  
+};
+
+
+
+template <typename _real_t>
+struct Point<2,_real_t> : public std::array<_real_t,2>
+{
+private: using parent_t = std::array<_real_t,2>;
+
+public: using real_t = _real_t;
+public: int_t m_cod{0};
+
+
+public: inline Point(){};
+public: inline Point(const _real_t x_,
+		     const _real_t y_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+  };
+  
+public: inline Point(const _real_t x_,
+		     const _real_t y_,
+		     const int_t cod_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    this->SetCod(cod_);
+  };
+
+public: inline typename parent_t::size_type GetSize() const noexcept
+  {
+    return this->size();
+  };  
+
+public: inline int_t GetCod() const noexcept
+  {
+    return m_cod;
+  };
+  
+public: inline void SetCod(const int_t cod_) noexcept
+  {
+    m_cod = cod_;
+  };
+  
+};
+#endif
+
+template <typename _real_t> using Point3d = Point<3,_real_t>;
+template <typename _real_t> using Point2d = Point<2,_real_t>;
+
+
+#if 0
+template <typename _real_t>
+struct Point3d : public Point<3,_real_t>
+{
+public: inline Point3d(){};
+public: inline Point3d(const _real_t x_,
+		       const _real_t y_,
+		       const _real_t z_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    (*this)[2] = z_;
+  };
+  
+public: inline Point3d(const _real_t x_,
+		       const _real_t y_,
+		       const _real_t z_,
+		       const int_t cod_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    (*this)[2] = z_;
+    this->SetCod(cod_);
+  };
+  
+};
+
+template <typename _real_t>
+struct Point2d : public Point<2,_real_t>
+{
+public: inline Point2d(){};  
+public: inline Point2d(const _real_t x_,
+		       const _real_t y_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+  };
+  
+public: inline Point2d(const _real_t x_,
+		       const _real_t y_,
+		       const int_t cod_)
+  {
+    (*this)[0] = x_;
+    (*this)[1] = y_;
+    this->SetCod(cod_);
+  };
+  
+};
+
+
+
+
+#endif

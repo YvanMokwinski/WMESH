@@ -1,0 +1,382 @@
+
+#include "Memory.h"
+#include "Err.h"
+
+#include <valarray>
+#include "MeshVolumeSpace.hpp"
+#include "MeshVolume2Dof.hpp"
+#include "Linsys.h"
+#include "TimeMeasure.h"
+#include "CompressedSequenceStorage.hpp"
+#include "FullSequenceStorage.hpp"
+#include "FiniteElementSpace.hpp"
+#include "MeshVolumeSpace.hpp"
+
+#include "Logging/Error.hpp"
+#include "Logging/Warning.hpp"
+#include "Program.hpp"
+
+
+
+
+
+template <typename C> void apply(CRTP_ISequenceStorage<C>& r)
+{
+
+  for (int i=0;i<9000000;++i)
+    {
+      auto v = r(0,0);
+      v+=2;
+      r(0,0)=v;
+      //r.Set(0,0,v);
+    }
+};
+
+
+class MnsFiniteElementSpace3D : public Program
+{
+  I m_degree;
+public:
+
+  
+  MnsFiniteElementSpace3D(int 		argc,
+			  char * 	argv[]) : Program(argc,argv,true)
+  {
+
+
+    
+
+    this->AddOption(new Option<I>(&m_degree,"-k",2,true,"Lagrange"));
+  };
+
+  template <typename _derivedClass> CRTP_ISequenceStorage<_derivedClass>* Get()
+  {
+    I in[]  = {15,16,17,10,13,12,11};
+    I s[]  = {0,4,6,7};
+    return new _derivedClass(3,in,s);
+  };
+  
+  virtual void Main()
+
+  {
+    MemoryContext memcontext;
+#if 1
+    {
+      auto f = Get<CompressedSequenceStorage<I> >();
+      
+      I in[]  = {15,16,17,10,13,12,11};
+      I s[]  = {0,4,6,7};
+      CompressedSequenceStorage<I> tt(3,in,s);
+
+//     for(auto __begin = tt.begin(1),__end = tt.end(1);__begin!=__end;++__begin)
+//	{
+//	  auto adjacentNodeIndex = *__begin;
+//	  std::cout << adjacentNodeIndex <<std::endl;
+//	}
+//
+
+      std::cout << "aa" << std::endl;
+      for(auto adjacentNodeIndex : tt.GetSequence(1) )
+	{
+	  std::cout << adjacentNodeIndex <<std::endl;
+	}
+      std::cout << "aa" << std::endl;
+      for (int i=0;i<10000;++i)
+	{
+	  apply(tt);
+	}
+      std::cout << tt(0,0) << std::endl;
+      std::cout << "bb" << std::endl;
+    }
+
+    {
+      I in[]  = {10,13,12,11,15,32};
+      FullSequenceStorage<I> tt(3,
+				in,
+				2);
+
+
+      
+      for (int i=0;i<10000;++i)
+	{
+	  apply(tt);
+	}
+      std::cout << tt(0,0) << std::endl;
+    }
+    
+#endif
+
+
+    if (this->HasVerbose())
+      {
+Logging::Message::Get()  << "degree " 	<< m_degree << endl;
+Logging::Message::Get()  << "ofilename " << this->GetOfilename() << endl;
+}
+
+    MemoryContext_def(&memcontext,
+		      0,
+		      777,
+		      MemoryType_STD);  
+    
+    //    const unsigned int numIfilenames = this->GetNumInputFiles();
+    if (this->HasVerbose())
+      {
+Logging::Message::Get()  << "ifilename " << this->GetInputFilename(0).c_str() << endl;
+      }
+    
+    auto mesh = new MeshVolume(&memcontext,
+				  __ePrecision_DOUBLE,
+				  this->GetInputFilename(0).c_str());
+    
+    mesh->BuildAdjacencies(NULL);
+
+    auto space = MeshVolumeSpaceFactory::Create(mesh,m_degree);
+    //    pMeshVolumeSpace space 	= MeshVolumeReadOnly_newSpace(mesh,m_degree);    
+#if 0
+    pSparse space_endo 	= space->BuildEndomorphism();
+    const I nddl 	= Sparse_get_n(space_endo);
+    printf("nddl " ifmt ", %d\n",nddl,Sparse_is_fortran_index		(space_endo));
+#endif
+    
+    space->WriteMedit(this->GetOfilename().c_str());
+    
+#if 0
+    Sparse_spy(space_endo,"pourvoir.txt");
+#endif
+
+
+#if 0
+    if (1)
+    {
+      pR x 	= (pR)calloc(nddl,sizeof(R));
+      pR rhs 	= (pR)calloc(nddl,sizeof(R));
+      pMeshVolume2DofReadOnly 	vol2dof	= MeshVolumeSpaceReadOnly_get_MeshVolume2Dof(space);
+      pMeshDofReadOnly 		dofs	= MeshVolumeSpaceReadOnly_get_MeshDof(space);
+
+      TimeMeasure system_t0,system_t1;
+      TimeMeasure solve_t0,solve_t1;
+      TimeMeasure write_t0,write_t1;
+      STR solve_str,system_str,write_str;
+
+
+
+#define mxdof 512
+      I nn = mxdof;
+      pI dofelm = (pI)calloc(mxdof,sizeof(I));      
+      pR locrhs = (pR)calloc(mxdof,sizeof(R));
+      pR locmat = (pR)calloc(mxdof*mxdof,sizeof(R));
+
+      TimeMeasure_set		(&system_t0);
+      /* COMPUTE MATRIX */
+      { eVolume volume = __eVolume_ERROR;
+	for (++volume;volume<__eVolume_ALL;++volume)
+	  {
+	    const I numCells = MeshVolumeTopologyReadOnly_get_nbVolumes(MeshVolumeReadOnly_get_topology(mesh),volume);
+	    const I nddlelm = MeshVolume2DofReadOnly_get_nbDofInVolume(vol2dof,volume);
+	    
+	    if (nddlelm>nn)
+	      {
+		nn = nddlelm;
+		free(locrhs);
+		free(locmat);
+		free(dofelm);
+		dofelm = (pI)calloc(nn,sizeof(I));      
+		locrhs = (pR)calloc(nn,sizeof(R));
+		locmat = (pR)calloc(nn*nn,sizeof(R));
+	      }
+	    
+	    { I icell;
+	      for (icell=0;icell<numCells;++icell)
+		{
+		  MeshVolume2DofReadOnly_get(vol2dof,
+					     volume,
+					     icell,
+					     dofelm);
+		  { I j;
+		    for (j=0;j<nddlelm;++j)
+		      {
+			{ I i;
+			  for (i=0;i<nddlelm;++i)
+			    {
+			      locmat[j*nddlelm+i] = ((R)0.0);
+			    } }
+		      } }
+		  { I j;
+		    for (j=0;j<nddlelm;++j)
+		      {
+			locmat[j*nddlelm+j] = ((R)1.0);
+		      } }
+		
+		  { I j;
+		    for (j=0;j<nddlelm;++j)
+		      {
+			{ I i;
+			  for (i=0;i<nddlelm;++i)
+			    {
+			      Sparse_ass(space_endo,
+					 dofelm[i],
+					 dofelm[j],
+					 locmat[j*nddlelm+i]);			
+			    } }
+		      } }
+		} }	  
+	  } }
+      printf("compute rhs\n");
+
+      
+      /* COMPUTE RHS */
+      { eVolume volume = __eVolume_ERROR;
+	for (++volume;volume<__eVolume_ALL;++volume)
+	  {
+	    const I numCells = MeshVolumeTopologyReadOnly_get_nbVolumes(MeshVolumeReadOnly_get_topology(mesh),volume);
+	    const I nddlelm = MeshVolume2DofReadOnly_get_nbDofInVolume(vol2dof,volume);
+	    { I icell;
+	      for (icell=0;icell<numCells;++icell)
+		{
+		  MeshVolume2DofReadOnly_get(vol2dof,
+					     volume,
+					     icell,
+					     dofelm);
+		  
+		  { I i;
+		    for (i=0;i<nddlelm;++i)
+		      {
+			R xyz[3];
+			MeshDofReadOnly_get_coo	(dofs,
+						 dofelm[i],
+						 xyz);
+		       
+			locrhs[i] = cos(10.0*xyz[0]*xyz[1]*xyz[2]);
+		      } }
+		  
+		  { I j;
+		    for (j=0;j<nddlelm;++j)
+		      {
+			rhs[dofelm[j]]+=locrhs[j];
+		      } }
+		} }	  
+	  } }
+      free(dofelm);
+      free(locrhs);
+      free(locmat);
+      
+      TimeMeasure_set		(&system_t1);
+      TimeMeasure_get_string	(&system_t1,
+				 &system_t0,
+				 system_str);
+
+      TimeMeasure_set		(&solve_t0);
+      printf("solve linear system\n");
+
+
+
+#if 0
+      {
+	Sparse_fortran_indexation(space_endo);
+	
+	pLinsys linsys=	Linsys_new(__eLinearSolver_DIRECT,
+				   __eSparseFactorizationMethod_PARDISOLU,
+				   __eSparseIterativeMethod_ERROR,
+				   __eSparsePreconditioningMethod_ERROR);
+	
+	Linsys_precompute	(linsys,space_endo);
+	Linsys_compute		(linsys,space_endo,rhs,x);
+	linsys=	Linsys_kill(linsys); }
+      TimeMeasure_set		(&solve_t1);
+      TimeMeasure_get_string	(&solve_t1,
+				 &solve_t0,
+				 solve_str);
+
+      TimeMeasure_set		(&write_t0);
+#endif
+      printf("solve linear system done\n");
+      printf("write space\n");
+      MeshVolumeSpaceReadOnly_write_medit(space,this->GetOfilename().c_str());
+      printf("write space done\n");
+#if 0
+
+      {
+	FILE * out = fopen("toto.bb","w");
+	fprintf(out,"3 1 "ifmt" 2\n",nddl);
+	for (I i=0;i<nddl;++i)
+	  {
+	    fprintf(out,"%e\n",x[i]);
+	  }
+	fclose(out);
+      }
+#endif
+      TimeMeasure_set		(&write_t1);
+      TimeMeasure_get_string	(&write_t1,
+				 &write_t0,
+				 write_str);
+
+      std::cout << "system : " << system_str << std::endl;
+      std::cout << "solve  : " << solve_str << std::endl;
+      std::cout << "write  : " << write_str << std::endl;
+#if 0      
+      free(locmat);
+      free(locrhs);
+#endif
+      free(rhs);
+      free(x);
+
+      /* 
+	 solve 
+      */
+      
+    }
+#endif
+    
+    
+    delete space;
+    delete mesh;
+
+  };
+};
+
+
+
+int main(int 	argc_, 
+	 char* argv_[])
+{
+  MeshTopology3D m;
+
+  Node2Volume n(34);
+
+  
+
+  
+  //  LL< Kinds::Cell3D::First>::Loop(m);
+
+
+  
+  for (const auto v : Kinds::Cell3D::AllValues)
+    {
+      std::cout << "EEEEEE " << v << std::endl;
+    }
+  
+  for (const auto v : Kinds::Cell2D::AllValues)
+    {
+      std::cout << "EEEEEE " << v << std::endl;
+    }
+
+  
+  MeshTopology3D c;
+  auto fg=c.Get<Kinds::Cell3D::HEXAHEDRON>();
+#if 0
+  auto e = [](MeshTopology3D&r){};
+  Loop<Kinds::Cell3D::First>(e,c);
+  for (Kinds::Cell3D::EnumType e=;e<=Kinds::Cell3D::Last;++e)
+    {
+      //      std::cout << e << std::endl;
+    }
+#endif  
+  //  std::array<const MeshVolumeCollection*,__eVolume_ALL> m_connectivities = {NULL};
+  MnsFiniteElementSpace3D application(argc_,argv_);
+  application.Run();
+  return 0;
+}
+
+
+
+

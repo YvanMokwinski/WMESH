@@ -1,0 +1,230 @@
+#pragma once
+
+#include <string>
+#include "ReferenceCell.hpp"
+
+namespace Output
+{
+  class Medit
+  {
+  protected:
+    std::string m_filename;
+    std::ofstream m_out;
+  public : 
+    Medit(const std::string& filename_)
+      : m_filename(filename_+".mesh"),
+	m_out(m_filename.c_str()) 
+    {
+      this->m_out.precision(15);
+      this->m_out.setf(std::ios::scientific);
+    };
+      
+    virtual ~Medit()
+    {
+      this->m_out.close();
+    };
+      
+    template <typename _type> Medit& operator<<(const _type &type_)
+    {
+      m_out << type_;
+      return *this;
+    };
+      
+  };
+    
+  std::ostream& operator<< (std::ostream &out_,
+			    const ReferenceCell::FaceType::EnumType &faceType_)    
+  {
+    switch(faceType_)
+      {
+      case ReferenceCell::FaceType::Quadrilateral:
+	{
+	  out_ << "Quadrilaterals";
+	  break;
+	}
+      case ReferenceCell::FaceType::Triangle:
+	{
+	  out_ << "Triangles";
+	  break;
+	}
+      }
+    return out_;
+  };  
+
+  std::ostream& operator<< (std::ostream &out_,
+			    const ReferenceCell::Volume::EnumType &volumeType_)    
+  {	
+    switch(volumeType_)
+      {
+      case ReferenceCell::Volume::Tetrahedron:
+	{
+	  out_ << "Tetrahedra";
+	  break;
+	}
+      case ReferenceCell::Volume::Hexahedron:
+	{
+	  out_ << "Hexahedra";
+	}
+      case ReferenceCell::Volume::Pyramid:
+	{
+	  out_ << "Pyramids";
+	}
+      case ReferenceCell::Volume::Wedge:
+	{
+	  out_ << "Prisms";
+	}
+      }
+    return out_;
+  };
+
+  
+  template <typename _derivedClass>  std::ostream& operator<< (std::ostream &out_,
+							       const CRTP_MeshTopology<_derivedClass> &meshTopology_)
+  {
+    using this_t = CRTP_MeshTopology<_derivedClass>;
+
+    using entitykind_t = typename this_t::entitykind_t;
+    
+    for(const auto volumeType : ReferenceCell::Volume::AllValues)
+      {
+	const auto numEntitiesOfVolumeType = meshTopology_.GetNumEntities(volumeType_);
+	if ( numEntitiesOfVolumeType > 0 )
+	  {
+	    out_ << volumeType << std::endl;
+	    out_ << numEntitiesOfVolumeType << std::endl;
+
+	    for (unsigned int cellIndex=0;cellIndex < numCells;++cellIndex)
+	      {
+		meshTopology_.GetCellToNodes(volumeType_, i, cellToNodes);
+
+		for (unsigned int localNodeIndex=0;localNodeIndex < ReferenceVolume<Volume::Tetrahedron>::NbNodes;++localNodeIndex)
+		  {
+		    out_ << " " << cellToNodes[localNodeIndex] + 1;
+		  }
+		out_ << " 0";	       
+	      }	    
+	  }       	
+      }
+    
+  std::ostream& operator<< (std::ostream &out_,
+			    const ReferenceCell::Volume::EnumType &volumeType_)    
+
+
+    
+#if 0
+    const unsigned int dimension = mesh_.GetGeometryDimension();
+    out_ << "MeshVersionFormatted" << std::endl << "1" << std::endl << "Dimension" << std::endl << dimension << std::endl;      
+    out_ << "Vertices" << std::endl << mesh_.GetNumVertices() << std::endl;      
+    
+    typedef typename CRTP_ReadOnlyMesh<_derivedClass>::PointType PointType;
+    PointType p;
+      
+    for (unsigned int vertexIndex=0;vertexIndex<mesh_.GetNumVertices();++vertexIndex)
+      {
+	mesh_.GetVertex(vertexIndex,p);	 
+	out_ << p.Get(0);
+	for (unsigned int i=1;i<dimension;++i)
+	  {
+	    out_ << " " << p.Get(i);
+	  }
+	out_ << " 0" << std::endl;
+      }
+#endif
+
+    //    using 
+      //    typedef typename CRTP_ReadOnlyMesh<_derivedClass>::MeshTopology MeshTopology;
+    //	unsigned int cnc[4];
+    for (unsigned int topologyIndex=0;topologyIndex<mesh_.GetNumZones();++topologyIndex)
+      {
+	const MeshTopology * topology = mesh_.GetMeshTopology(topologyIndex);
+#if 0
+	template <typename _entityImpl> inline void GetEntity(const unsigned int&cellIndex_,CRTP_Entity<_entityImpl>&entity_) const
+	{		
+	};
+#endif
+	    
+	const unsigned int numCells = topology->GetNumCells();
+	out_ << topology->GetTypeShape() << std::endl;
+	out_ << numCells << std::endl;
+
+	typedef typename ReadOnlyMesh::MeshView MeshView;
+
+	typedef typename MeshView::CellIterator CellIterator;
+#if 1
+	const MeshView view = mesh_.GetMeshView();
+	CellIterator end_iterator = view.template end<0>();
+	for (CellIterator iterator = view.template begin<0>();
+	     iterator!=end_iterator;
+	     ++iterator)
+	  {
+		
+	    //		cout << "allo"  << endl;
+	  }
+
+#endif
+	    
+	    
+#if 0
+	int c = mesh_.template begin<int>();
+	cout << c << std::endl;
+	long int cc = mesh_.template begin<long int>();
+	cout << cc << std::endl;
+
+#endif
+#if 0
+	for (MeshTopology::entity_iterator it = topology->begin();it != topology->end();++it)
+	  {
+		
+	  }
+#endif
+
+#if 0
+
+	if (topology->GetTypeShape()==Mesh::Topology::QUADRILATERAL)
+	  {		
+	    for (unsigned int cellIndex=0;cellIndex < numCells;++cellIndex)
+	      {
+		topology->GetCellToNodes(cellIndex,cnc);
+		out_ << 1+cnc[0] << " " << 1+cnc[1] << " " << 1+cnc[3] << " " << 1+cnc[2] << " 0" << std::endl;
+	      }
+	  }
+	else
+	  {
+	    for (unsigned int cellIndex=0;cellIndex < numCells;++cellIndex)
+	      {
+		topology->GetCellToNodes(cellIndex,cnc);
+		out_ << 1+cnc[0] << " " << 1+cnc[1] << " " << 1+cnc[2] <<  " 0" << std::endl;
+	      }
+	  }
+
+#endif
+
+#if 0
+	const unsigned int numCells = topology->GetNumCells();
+	out_ << topology->GetTypeShape() << std::endl;
+	out_ << numCells << std::endl;
+	if (topology->GetTypeShape()==Mesh::Topology::QUADRILATERAL)
+	  {
+	    for (unsigned int cellIndex=0;cellIndex < numCells;++cellIndex)
+	      {
+		topology->GetCellToNodes(cellIndex,cnc);
+		out_ << 1+cnc[0] << " " << 1+cnc[1] << " " << 1+cnc[3] << " " << 1+cnc[2] << " 0" << std::endl;
+	      }
+	  }
+	else
+	  {
+	    for (unsigned int cellIndex=0;cellIndex < numCells;++cellIndex)
+	      {
+		topology->GetCellToNodes(cellIndex,cnc);
+		out_ << 1+cnc[0] << " " << 1+cnc[1] << " " << 1+cnc[2] <<  " 0" << std::endl;
+	      }
+	  }
+#endif
+      }
+
+    out_ << "End" << std::endl;      
+    return out_;
+  };
+#endif
+
+};

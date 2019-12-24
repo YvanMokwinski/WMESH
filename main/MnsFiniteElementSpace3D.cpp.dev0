@@ -1,0 +1,965 @@
+#include "Err.h"
+#include <valarray>
+#include "TimeMeasure.h"
+#include "Logging/Error.hpp"
+#include "Logging/Warning.hpp"
+#include "Program.hpp"
+#include "Points.h"
+#include <limits>
+#include "TreilliVolume.h"
+#include "Medit.h"
+
+
+  struct TopologicalDimension
+  {
+  public:
+    typedef enum
+      { Node=0,
+	Edge=1,
+	Face=2,
+	Volume=3 }
+      EnumType;
+    
+  public:
+    static constexpr std::array<EnumType,4> AllEnumTypes{{Node,Edge,Face,Volume}};
+  };
+
+  constexpr std::array<TopologicalDimension::EnumType,4> TopologicalDimension::AllEnumTypes;
+
+  TopologicalDimension::EnumType & operator ++(TopologicalDimension::EnumType& self_)
+  {
+    self_=static_cast<TopologicalDimension::EnumType>(self_+1);
+    return self_;
+  };
+
+
+  std::ostream& operator<<(std::ostream&s_,
+			   const TopologicalDimension::EnumType& d_)
+  {
+    switch(d_)
+      {
+      case TopologicalDimension::Node:
+	{
+	  s_ << "Node";
+	  break;
+	}
+
+      case TopologicalDimension::Edge:
+	{
+	  s_ << "Edge";
+	  break;
+	}
+
+      case TopologicalDimension::Face:
+	{
+	  s_ << "Face";
+	  break;
+	}
+
+      case TopologicalDimension::Volume:
+	{
+	  s_ << "Volume";
+	  break;
+	}
+	  
+      }
+    return s_;
+  };
+
+
+#include "ReferenceCell.hpp"
+
+struct EdgeCompare
+{
+  template<typename _integer_t> static inline bool AreSame(const _integer_t cncedge[],
+							   const _integer_t cncedge2[]) noexcept
+  {
+    return ( ( (cncedge[0] == cncedge2[0]) && (cncedge[1] == cncedge2[1]) )
+	     ||
+	     ( (cncedge[1] == cncedge2[0]) && (cncedge[0] == cncedge2[1]) ) );
+    
+  };
+  
+  template<typename _integer_t> static inline _integer_t HashCode(const _integer_t numCells_,
+								  const _integer_t cncedge_[]) noexcept
+  {
+    I h = ( (cncedge_[0] < cncedge_[1]) ? cncedge_[0] : cncedge_[1] ) % numCells_;
+    if (h<0)
+      h *= -1;
+    return h;
+  };
+
+};
+
+
+template <ReferenceCell::FaceType::EnumType _faceType> struct FaceCompare;
+
+template <> struct FaceCompare<ReferenceCell::FaceType::Triangle>
+{
+  template<typename _integer_t> static inline bool AreSame(const _integer_t cncface[],
+							   const _integer_t cncface2[]) noexcept
+  {
+    return ( ( (cncface[0] == cncface2[2]) && (cncface[1] == cncface2[1]) && (cncface[2] == cncface2[0]) )
+	     ||
+	     ( (cncface[0] == cncface2[1]) && (cncface[1] == cncface2[0]) && (cncface[2] == cncface2[2]) )
+	     ||
+	     ( (cncface[0] == cncface2[0]) && (cncface[1] == cncface2[2]) && (cncface[2] == cncface2[1]) ) );  
+  };
+  
+  template<typename _integer_t> static inline I HashCode(const _integer_t numCells_,
+							 const _integer_t cncface_[]) noexcept
+  {
+    I h = (cncface_[0] < cncface_[1])
+      ? ( (cncface_[0] < cncface_[2]) ? cncface_[0] : cncface_[2] ) 
+      : ( (cncface_[1] < cncface_[2]) ? cncface_[1] : cncface_[2] );
+    
+    h = h % numCells_;
+    if (h<0)
+      h *= -1;
+    return h;
+  };
+
+};
+
+using TriangleCompare = FaceCompare<ReferenceCell::FaceType::Triangle>;
+
+
+inline void HalfFaceDecomposition(const I halfFaceIndex_,
+				  const I numDofsPerCell_,
+				  const I numDofsPerInteriorFace_,
+				  I* cellIndex_,
+				  I* localFaceIndex_)
+{
+  cellIndex_[0] = halfFaceIndex_ / numDofsPerCell_;
+  localFaceIndex_[0] = ( halfFaceIndex_ % numDofsPerCell_ ) / numDofsPerInteriorFace_;
+#ifndef NDEBUG
+  if (localFaceIndex_[0]<0 || localFaceIndex_[0] >=4)
+    {
+      std::cerr << "error"<< std::endl;
+      exit(1);
+    }
+#endif
+};
+
+inline void HalfEdgeDecomposition(const I halfEdgeIndex_,
+				  const I numDofsPerCell_,
+				  const I numDofsPerInteriorEdge_,
+				  I* cellIndex_,
+				  I* localEdgeIndex_)
+{
+  cellIndex_[0] = halfEdgeIndex_ / numDofsPerCell_;
+  localEdgeIndex_[0] = ( halfEdgeIndex_ % numDofsPerCell_ ) / numDofsPerInteriorEdge_;
+#ifndef NDEBUG
+  if (localEdgeIndex_[0]<0 || localEdgeIndex_[0] >=6)
+    {
+      std::cerr << "error"<< std::endl;
+      exit(1);
+    }
+#endif
+};
+
+template <unsigned int _n> inline void GetCellToNodes(cst_pI cellsToNodes_,
+						      const I cellIndex_,
+						      I cnc_[])
+{
+  for (I localNodeIndex=0;localNodeIndex<_n;++localNodeIndex)
+    {
+      cnc_[localNodeIndex] = cellsToNodes_[_n*cellIndex_+localNodeIndex];
+    }
+}
+
+
+inline void GetEdgeToNodes(const I 	cnc_[],
+			   const I 	localEdgeIndex_,
+			   I 		cncedge_[])		    
+{
+  static const I tetraedge_cnc[] = { 1,2,
+				     2,0,
+				     0,1,
+				     2,3,
+				     0,3,
+				     1,3};			
+  cncedge_[0] = cnc_[tetraedge_cnc[localEdgeIndex_*2+0]];
+  cncedge_[1] = cnc_[tetraedge_cnc[localEdgeIndex_*2+1]];
+};
+
+inline void GetFaceToNodes(const I 	cnc_[],
+			   const I 	localFaceIndex_,
+			   I 		cncface_[])		    
+{
+  static const I tetraface_cnc[] = {1,2,3,
+				     2,0,3,
+				     0,1,3,
+				     0,2,1};
+
+  cncface_[0] = cnc_[tetraface_cnc[localFaceIndex_*3+0]];
+  cncface_[1] = cnc_[tetraface_cnc[localFaceIndex_*3+1]];
+  cncface_[2] = cnc_[tetraface_cnc[localFaceIndex_*3+2]];
+};
+
+template <unsigned int _degree,ReferenceCell::Volume::EnumType _volumeType> struct ReferenceFiniteElementLagrange
+{
+  
+ private: static constexpr unsigned int s_numVerticesInCell 	 = ReferenceCell::ReferenceVolume<_volumeType>::NbNodes;
+ private: static constexpr unsigned int s_numEdgesInCell 	 = ReferenceCell::ReferenceVolume<_volumeType>::NbEdges;
+ private: static constexpr unsigned int s_numFacesInCell 	 = ReferenceCell::ReferenceVolume<_volumeType>::NbFaces;
+  
+ public: static constexpr unsigned int NumDofsPerCell 	 	= ((_degree+1)*(_degree+2)*(_degree+3)) / 6;
+ public: static constexpr unsigned int NumDofsPerInteriorEdge 	= (_degree>0) ? _degree-1 : 0; 
+ public: static constexpr unsigned int NumDofsPerInteriorFace 	= (_degree>2) ? ((_degree-1)*(_degree-2))/2 : 0;  
+ public: static constexpr unsigned int
+    NumDofsPerInteriorVolume = NumDofsPerCell
+    - s_numVerticesInCell
+    - s_numEdgesInCell * NumDofsPerInteriorEdge
+    - s_numFacesInCell * NumDofsPerInteriorFace;
+
+};
+
+template <unsigned int _degree, typename _I> _I*__restrict__ GenerateFiniteElementSpace(const _I numCells_,
+											const _I*__restrict__ cellsToNodes_,
+											_I*numDofs_)
+{  
+  static constexpr unsigned int s_numVerticesInCell 	 = ReferenceCell::Tetrahedron::NbNodes;
+  static constexpr unsigned int s_numEdgesInCell 	 = ReferenceCell::Tetrahedron::NbEdges;
+  static constexpr unsigned int s_numFacesInCell 	 = ReferenceCell::Tetrahedron::NbFaces;
+
+  using finiteElement_t = ReferenceFiniteElementLagrange<_degree,ReferenceCell::Volume::Tetrahedron>;
+
+  static constexpr unsigned int s_numDofsPerCell 	 	= finiteElement_t::NumDofsPerCell;
+  static constexpr unsigned int s_numDofsPerInteriorEdge 	= finiteElement_t::NumDofsPerInteriorEdge;
+  static constexpr unsigned int s_numDofsPerInteriorFace 	= finiteElement_t::NumDofsPerInteriorFace;
+  static constexpr unsigned int s_numDofsPerInteriorVolume 	= finiteElement_t::NumDofsPerInteriorVolume;
+  
+  std::cout << "s_numDofsPerCell           " << s_numDofsPerCell           << std::endl;
+  std::cout << "s_numDofsPerInteriorEdge   " << s_numDofsPerInteriorEdge   << std::endl;
+  std::cout << "s_numDofsPerInteriorFace   " << s_numDofsPerInteriorFace   << std::endl;
+  std::cout << "s_numDofsPerInteriorVolume " << s_numDofsPerInteriorVolume << std::endl;
+  
+  _I* cellsToDofs = new _I[numCells_ * s_numDofsPerCell];
+  //
+  // Set dofs over the vertices
+  //
+  _I dofIndex = 0;
+  for (_I i=0;i<numCells_;++i)
+    {
+      for (unsigned int j=0;j<s_numVerticesInCell;++j)
+	{
+	  cellsToDofs[s_numDofsPerCell*i+j] = cellsToNodes_[s_numVerticesInCell*i+j];
+	  if (cellsToNodes_[s_numVerticesInCell*i+j] > dofIndex)
+	    {
+	      dofIndex = cellsToNodes_[s_numVerticesInCell*i+j];
+	    }
+	}  
+    }
+  
+  unsigned long long int numEdges = 0;
+  unsigned long long int numFaces = 0;
+
+  //
+  // Set dofs over the edges.
+  //
+  if (s_numDofsPerInteriorEdge>0)
+    {
+
+    static constexpr const _I default_hash = - numeric_limits<_I>::max();
+    
+    {      
+      _I*__restrict__ link = new _I[numCells_];
+      for (_I i=0;i<numCells_;++i)
+	{
+	  link[i] = default_hash;
+	}
+      
+      _I edgeToNodes[2];	  
+      _I cellToNodes[s_numVerticesInCell];
+      for (_I cellIndex=0;cellIndex<numCells_;++cellIndex)
+	{
+	  //
+	  // Copy connectivity.
+	  //
+	  GetCellToNodes<s_numVerticesInCell>(cellsToNodes_,
+					      cellIndex,
+					      cellToNodes);
+	  
+	  _I at = s_numDofsPerCell*cellIndex + s_numVerticesInCell;
+	  for (unsigned int localEdgeIndex=0;localEdgeIndex<s_numEdgesInCell;++localEdgeIndex)
+	    {	      
+	      //
+	      // Extract the edgeToNodes.
+	      //
+	      GetEdgeToNodes(cellToNodes,
+			     localEdgeIndex,
+			     edgeToNodes);
+	      
+	      //
+	      // Compute has value.
+	      //
+	      const _I hashValue = EdgeCompare::HashCode(numCells_,
+							 edgeToNodes);
+	      
+	      //
+	      // Assign the last half edge index with the same hash value.
+	      //
+	      cellsToDofs[at] = link[hashValue];
+
+	      //
+	      // Ujpdate the last half edge index with respect to the hash value.
+	      //
+	      link[hashValue] = -at;
+	      at += s_numDofsPerInteriorEdge;
+	    }	
+	}
+      delete [] link;
+    }
+
+    
+    _I edgeToNodes[2];	  
+    _I cellToNodes[s_numVerticesInCell];
+    _I interiorEdgeDofIndices[s_numDofsPerInteriorEdge];    
+    for (_I cellIndex=numCells_-1;cellIndex>=0;--cellIndex)
+      {	
+	GetCellToNodes<s_numVerticesInCell>(cellsToNodes_,
+					    cellIndex,
+					    cellToNodes);
+	
+	for (int localEdgeIndex = s_numEdgesInCell-1;localEdgeIndex>=0;--localEdgeIndex)
+	  { 
+	    const _I initialHalfEdgeIndex = -(s_numDofsPerCell*cellIndex+s_numVerticesInCell + s_numDofsPerInteriorEdge*localEdgeIndex + 0);
+	    _I nextHalfEdgeIndex = cellsToDofs[-initialHalfEdgeIndex];
+	    if (nextHalfEdgeIndex < 0)
+	      {
+		++numEdges;
+		GetEdgeToNodes(cellToNodes,
+			       localEdgeIndex,
+			       edgeToNodes);
+
+		const bool edgeHasPositiveOrientation = (edgeToNodes[0] < edgeToNodes[1]);		
+		//
+		// that's the first visit of the edge
+		//
+		if (edgeHasPositiveOrientation)
+		  {
+		    for (unsigned int i=0;i<s_numDofsPerInteriorEdge;++i)
+		      {
+			interiorEdgeDofIndices[i] = ++dofIndex;
+		      }		    
+		  }
+		else
+		  {
+		    for (unsigned int i=0;i<s_numDofsPerInteriorEdge;++i)
+		      {
+			interiorEdgeDofIndices[s_numDofsPerInteriorEdge - 1 - i] = ++dofIndex;
+		      }
+		  }
+
+		//
+		// Assign the interior dofs to the current new edge
+		//
+		{
+		  const _I at = s_numDofsPerCell * cellIndex + s_numVerticesInCell + s_numDofsPerInteriorEdge * localEdgeIndex;
+		  for (unsigned int i=0;i<s_numDofsPerInteriorEdge;++i)
+		    {
+		      cellsToDofs[at+i] = interiorEdgeDofIndices[i];
+		    }
+		}
+		
+		_I lastDifferentHalfEdgeIndex = initialHalfEdgeIndex;
+		while (nextHalfEdgeIndex < 0 && nextHalfEdgeIndex != default_hash)
+		  {		    
+		    _I testedCellIndex;
+		    _I testedLocalEdgeIndex;
+		    HalfEdgeDecomposition(-nextHalfEdgeIndex - s_numVerticesInCell,
+					  s_numDofsPerCell,
+					  s_numDofsPerInteriorEdge,
+					  &testedCellIndex,
+					  &testedLocalEdgeIndex);
+
+		    //
+		    // We need to extract the next half edge before we overwrite it.
+		    //
+		    const _I nextHalfEdgeIndexBackup = nextHalfEdgeIndex;
+		    nextHalfEdgeIndex = cellsToDofs[-nextHalfEdgeIndex];
+		    
+		    _I testedCellToNodes[s_numVerticesInCell];
+		    GetCellToNodes<s_numVerticesInCell>(cellsToNodes_,
+							testedCellIndex,
+							testedCellToNodes);
+		    
+		    _I testedEdgeToNodes[2];
+		    GetEdgeToNodes(testedCellToNodes,
+				   testedLocalEdgeIndex,
+				   testedEdgeToNodes);
+
+		    const bool testedEdgeHasPositiveOrientation = (testedEdgeToNodes[0] < testedEdgeToNodes[1]);
+		    if (EdgeCompare::AreSame(edgeToNodes,
+						 testedEdgeToNodes))
+		      {
+			//
+			// We need to rebuild the linked list.
+			//
+			if (lastDifferentHalfEdgeIndex != initialHalfEdgeIndex)
+			  {				
+			    cellsToDofs[-lastDifferentHalfEdgeIndex] = nextHalfEdgeIndex;
+			  }
+			
+			const _I at = s_numDofsPerCell*testedCellIndex+s_numVerticesInCell+s_numDofsPerInteriorEdge*testedLocalEdgeIndex;
+			if (edgeHasPositiveOrientation == testedEdgeHasPositiveOrientation)
+			  {
+			    // we copy 
+			    for (unsigned int i=0;i<s_numDofsPerInteriorEdge;++i)
+			      {
+				cellsToDofs[at + i] = interiorEdgeDofIndices[i];
+			      }
+			  }
+			else
+			  {
+			    // we copy reverse
+			    for (unsigned int i=0;i<s_numDofsPerInteriorEdge;++i)
+			      {
+				cellsToDofs[at + i] = interiorEdgeDofIndices[s_numDofsPerInteriorEdge - 1 - i];
+			      }
+			  }
+		      }
+		    else
+		      {
+			//
+			// this is NOT the same edge.
+			//
+			lastDifferentHalfEdgeIndex = nextHalfEdgeIndexBackup;
+		      }
+		  }		
+	      }
+	  }
+      }
+
+
+    
+#ifndef NDEBUG
+  std::cout << "edge table " << std::endl;
+  
+  //
+  // mark edge
+  //
+  for (_I cellIndex=0;cellIndex<numCells_;++cellIndex)
+    {
+      for (_I localEdgeIndex=0;localEdgeIndex<s_numEdgesInCell;++localEdgeIndex)
+	{
+	  for (_I k = 0;k<s_numDofsPerInteriorEdge;++k)
+	    {
+	      //
+	      // only the first dof on edge.
+	      //
+	      std::cout << " " << cellsToDofs[s_numDofsPerCell * cellIndex+ s_numVerticesInCell + s_numDofsPerInteriorEdge * localEdgeIndex+k];
+	    }
+	}      
+      std::cout << std::endl;
+    }
+
+
+#endif
+  }
+  std::cout << "numEdges " << numEdges << std::endl;
+  std::cout << "dofIndex " << dofIndex << std::endl;
+  //
+  // Set dofs over the faces.
+  //
+  if (s_numDofsPerInteriorFace>0)
+  {
+    const I s = (_degree-1)*(_degree-1);
+    _I* permloc = new _I[s > s_numDofsPerInteriorFace ? s : s_numDofsPerInteriorFace];
+    static constexpr const _I default_hash = - numeric_limits<_I>::max();
+    
+    {      
+      _I*__restrict__ link = new _I[numCells_];
+      for (_I i=0;i<numCells_;++i)
+	{
+	  link[i] = default_hash;
+	}
+      
+      _I faceToNodes[4];	  
+      _I cellToNodes[s_numVerticesInCell];
+      for (_I cellIndex=0;cellIndex<numCells_;++cellIndex)
+	{
+	  //
+	  // Copy connectivity.
+	  //
+	  GetCellToNodes<s_numVerticesInCell>(cellsToNodes_,
+					      cellIndex,
+					      cellToNodes);
+	  
+	  _I at = s_numDofsPerCell * cellIndex + s_numVerticesInCell + s_numEdgesInCell * s_numDofsPerInteriorEdge;
+	  for (unsigned int localFaceIndex=0;localFaceIndex<s_numFacesInCell;++localFaceIndex)
+	    {	      
+	      //
+	      // Extract the edgeToNodes.
+	      //
+	      GetFaceToNodes(cellToNodes,
+			     localFaceIndex,
+			     faceToNodes);
+	      
+	      //
+	      // Compute has value.
+	      //
+	      const _I hashValue = TriangleCompare::HashCode(numCells_,
+							     faceToNodes);
+	      
+	      //
+	      // Assign the last half edge index with the same hash value.
+	      //
+	      cellsToDofs[at] = link[hashValue];
+
+	      //
+	      // Ujpdate the last half edge index with respect to the hash value.
+	      //
+	      link[hashValue] = -at;
+	      at += s_numDofsPerInteriorFace;
+	    }	
+	}
+      delete [] link;
+    }
+
+    _I faceToNodes[4];	  
+    _I cellToNodes[s_numVerticesInCell];
+    _I interiorFaceDofIndices[s_numDofsPerInteriorFace];    
+    for (_I cellIndex=numCells_-1;cellIndex>=0;--cellIndex)
+      {	
+	
+	GetCellToNodes<s_numVerticesInCell>(cellsToNodes_,
+					    cellIndex,
+					    cellToNodes);
+	
+	for (int localFaceIndex = s_numFacesInCell-1;localFaceIndex>=0;--localFaceIndex)
+	  { 
+	    const _I initialHalfFaceIndex = -(s_numDofsPerCell*cellIndex+ s_numVerticesInCell + s_numEdgesInCell * s_numDofsPerInteriorEdge + s_numDofsPerInteriorFace*localFaceIndex + 0);
+	    _I nextHalfFaceIndex = cellsToDofs[-initialHalfFaceIndex];
+	    if (nextHalfFaceIndex < 0)
+	      {
+		++numFaces;
+		GetFaceToNodes(cellToNodes,
+			       localFaceIndex,
+			       faceToNodes);
+
+		//
+		// that's the first visit of the face
+		//
+#if 0
+		for (unsigned int i=0;i<s_numDofsPerInteriorFace;++i)
+		  {
+		    interiorFaceDofIndices[i] = ++dofIndex;
+		  }		    
+#endif		
+		//
+		// Assign the interior dofs to the current new face
+		//
+		  
+		eFace_orientationPermutation	(__eFace_TRIANGLE,
+						 1,
+						 _degree,
+						 permloc);
+
+
+		
+		
+		I oldDofIndex = dofIndex;
+		{
+		  const _I at = s_numDofsPerCell * cellIndex
+		    + s_numVerticesInCell
+		    + s_numEdgesInCell * s_numDofsPerInteriorEdge
+		    + s_numDofsPerInteriorFace * localFaceIndex;
+		  for (unsigned int i=0;i<s_numDofsPerInteriorFace;++i)
+		    {
+		      cellsToDofs[at+i] = dofIndex + 1 + permloc[i];
+		    }
+		  dofIndex += s_numDofsPerInteriorFace;
+		}
+		
+		_I lastDifferentHalfFaceIndex = initialHalfFaceIndex;
+		while (nextHalfFaceIndex < 0 && nextHalfFaceIndex != default_hash)
+		  {		    
+		    _I testedCellIndex;
+		    _I testedLocalFaceIndex;
+		    HalfFaceDecomposition(-nextHalfFaceIndex - s_numVerticesInCell - s_numEdgesInCell * s_numDofsPerInteriorEdge,
+					  s_numDofsPerCell,
+					  s_numDofsPerInteriorFace,
+					  &testedCellIndex,
+					  &testedLocalFaceIndex);
+
+		    //
+		    // We need to extract the next half face before we overwrite it.
+		    //
+		    const _I nextHalfFaceIndexBackup = nextHalfFaceIndex;
+		    nextHalfFaceIndex = cellsToDofs[-nextHalfFaceIndex];
+		    
+		    _I testedCellToNodes[s_numVerticesInCell];
+		    GetCellToNodes<s_numVerticesInCell>(cellsToNodes_,
+							testedCellIndex,
+							testedCellToNodes);
+		    
+		    _I testedFaceToNodes[4];
+		    GetFaceToNodes(testedCellToNodes,
+				   testedLocalFaceIndex,
+				   testedFaceToNodes);
+		    
+		    // const bool testedFaceHasPositiveOrientation = (testedFaceToNodes[0] < testedFaceToNodes[1]);
+		    if (TriangleCompare::AreSame(faceToNodes,
+				    testedFaceToNodes))
+		      {
+			char irot;
+			eFace_orientation(__eFace_TRIANGLE,
+					  faceToNodes,
+					  testedFaceToNodes,
+					  &irot);
+
+			eFace_orientationPermutation	(__eFace_TRIANGLE,
+							 (int)irot,
+							 _degree,
+							 permloc);
+			
+			//
+			// We need to rebuild the linked list.
+			//
+			if (lastDifferentHalfFaceIndex != initialHalfFaceIndex)
+			  {				
+			    cellsToDofs[-lastDifferentHalfFaceIndex] = nextHalfFaceIndex;
+			  }
+			
+			const _I at = s_numDofsPerCell*testedCellIndex+s_numVerticesInCell+ s_numEdgesInCell * s_numDofsPerInteriorEdge + s_numDofsPerInteriorFace*testedLocalFaceIndex;
+
+			// we copy 
+			for (unsigned int i=0;i<s_numDofsPerInteriorFace;++i)
+			  {
+			    cellsToDofs[at + i] =  oldDofIndex + 1 + permloc[i];
+			  }
+
+			break;
+			
+#if 0
+			if (faceHasPositiveOrientation == testedFaceHasPositiveOrientation)
+			  {
+			    // we copy 
+			    for (unsigned int i=0;i<s_numDofsPerInteriorFace;++i)
+			      {
+				cellsToDofs[at + i] = interiorFaceDofIndices[i];
+			      }
+			  }
+			else
+			  {
+			    // we copy reverse
+			    for (unsigned int i=0;i<s_numDofsPerInteriorFace;++i)
+			      {
+				cellsToDofs[at + i] = interiorFaceDofIndices[s_numDofsPerInteriorFace - 1 - i];
+			      }
+			  }
+#endif
+			
+		      }
+		    else
+		      {
+			//
+			// this is NOT the same face.
+			//
+			lastDifferentHalfFaceIndex = nextHalfFaceIndexBackup;
+		      }
+		    
+		  }		
+	      }
+	  }
+      }
+
+#ifndef NDEBUG
+  std::cout << "face table " << std::endl;
+  
+  //
+  // mark face
+  //
+  for (_I cellIndex=0;cellIndex<numCells_;++cellIndex)
+    {
+      for (_I localFaceIndex=0;localFaceIndex<s_numFacesInCell;++localFaceIndex)
+	{
+	  for (unsigned int k = 0;k<s_numDofsPerInteriorFace;++k)
+	    {
+	      //
+	      // only the first dof on edge.
+	      //
+	      std::cout << " " << cellsToDofs[s_numDofsPerCell * cellIndex+ s_numVerticesInCell + s_numEdgesInCell * s_numDofsPerInteriorEdge + s_numDofsPerInteriorFace * localFaceIndex+k];
+	    }
+	}      
+      std::cout << std::endl;
+    }
+
+
+#endif
+  std::cout << "numFaces " << numFaces << std::endl;
+  std::cout << "dofIndex " << dofIndex << std::endl;
+  }
+
+  if (s_numDofsPerInteriorVolume>0)
+    {
+      //
+      // Set dofs over the volumes.
+      //
+      for (_I cellIndex=0;cellIndex<numCells_;++cellIndex)
+	{
+	  const _I at = s_numDofsPerCell * cellIndex + s_numVerticesInCell + s_numEdgesInCell * s_numDofsPerInteriorEdge + s_numDofsPerInteriorFace * s_numFacesInCell;
+	  for (unsigned int k = 0;k<s_numDofsPerInteriorVolume;++k)
+	    {
+	      cellsToDofs[at + k] = ++dofIndex;
+	    }     
+	}
+    }
+
+#ifndef NDEBUG
+  std::cout << "volume table " << std::endl;
+    
+  //
+  // mark face
+  //
+  if (s_numDofsPerInteriorVolume>0)
+    {
+      for (_I cellIndex=0;cellIndex<numCells_;++cellIndex)
+	{
+	  const _I at = s_numDofsPerCell * cellIndex + s_numVerticesInCell + s_numEdgesInCell * s_numDofsPerInteriorEdge + s_numDofsPerInteriorFace * s_numFacesInCell;
+	  for (unsigned int k = 0;k<s_numDofsPerInteriorVolume;++k)
+	    {
+	      //
+	      // only the first dof on edge.
+	      //
+	      std::cout << " " << cellsToDofs[at +k];
+	    }
+	  std::cout << std::endl;
+	}
+    }
+#endif
+  numDofs_[0] = ++dofIndex;
+  return cellsToDofs;  
+};
+
+
+
+
+class MnsFiniteElementSpace3D : public Program
+{
+  I m_degree;
+public:
+
+  
+  MnsFiniteElementSpace3D(int 		argc,
+			  char * 	argv[]) : Program(argc,argv,true)
+  {
+
+
+    
+
+    this->AddOption(new Option<I>(&m_degree,"-k",2,true,"Lagrange"));
+  };
+
+  virtual void Main()
+  {
+
+    if (this->HasVerbose())
+      {
+	
+	LogMessage  << "degree " 	<< m_degree << endl;
+	LogMessage  << "ofilename " << this->GetOfilename() << endl;
+      }
+
+    if (Mpi::IsMaster())
+      {
+	// const unsigned int numIfilenames = this->GetNumInputFiles();
+	pMedit medit = Medit_new(this->GetInputFilename(0).c_str());
+	I numTetrahedrons = Medit_get_nbVolumes	(medit,
+						 __eVolume_TETRAHEDRON);
+	I numVertices = Medit_get_nbVertices	(medit);
+	
+	std::cout << "1##############################" << std::endl;
+	pPoints xyz = Points_new(__eDim_3,
+				 numVertices);
+	
+	pI cod = new I[numVertices];
+	I n1 = 1;
+	Medit_get_Points(medit,
+			 xyz,
+			 cod,
+			 &n1);
+	
+	std::cout << "1##############################" << std::endl;
+	pI tetcod = new I[numTetrahedrons];
+	pI cellsToNodes = new I[4*numTetrahedrons];
+	
+	Medit_get_cncVolume(medit,
+			    cellsToNodes,
+			    4,
+			    tetcod,
+			    1,
+			    __eVolume_TETRAHEDRON);
+	
+	std::cout << "numtet " << numTetrahedrons << std::endl;
+	for (I i=0;i<numTetrahedrons;++i)
+	  {
+	    std::cout << " " << cellsToNodes[4*i+0]
+		      << " " << cellsToNodes[4*i+1]
+		      << " " << cellsToNodes[4*i+2]
+		      << " " << cellsToNodes[4*i+3]
+		      << std::endl;
+	  }
+
+	
+	static constexpr unsigned int _degree=2;
+	I numDofs;
+	pI cellsToDofs = GenerateFiniteElementSpace<_degree,I>(numTetrahedrons,
+							       cellsToNodes,
+							       &numDofs);
+	std::cout << "NumDofs " << numDofs << std::endl;
+	double*coo = new double[numDofs * 3];
+	pTreilliVolume treilli= 	TreilliVolume_new(__eVolume_TETRAHEDRON,
+							  _degree);
+	I nbv= 		TreilliVolume_get_nbVertices		(treilli);
+
+	double*rst = new double[nbv*3];
+	TreilliVolume_get_coo_double		(treilli,
+						 rst,
+						 nbv);
+	double x0[3];
+	double x1[3];
+	double x2[3];
+	double x3[3];
+	bool *flag=new bool[numDofs];
+	for (I i=0;i<numDofs;++i)
+	  {
+	    flag[i]=false;
+	  }
+	for (I i = 0 ;i<numTetrahedrons;++i)
+	  {
+	    Points_get		(xyz,
+				 cellsToNodes[4*i+0],
+				 x0);
+	    Points_get		(xyz,
+				 cellsToNodes[4*i+1],
+				 x1);
+	    Points_get		(xyz,
+				 cellsToNodes[4*i+2],
+				 x2);
+	    Points_get		(xyz,
+				 cellsToNodes[4*i+3],
+				 x3);
+
+	    for (I j=0;j<nbv;++j)
+	      {
+		I k = cellsToDofs[nbv*i+j];
+		
+		const double
+		  r = rst[j],
+		  s = rst[nbv+j],
+		  t = rst[2*nbv+j];
+
+		const double
+		  l0 = 1.0 -r -s-t,
+		  l1 = r,
+		  l2= s,
+		  l3 = t;
+
+		const double
+		  x = l0 * x0[0] + l1*x1[0] + l2*x2[0] + l3*x3[0],
+		  y = l0 * x0[1] + l1*x1[1] + l2*x2[1] + l3*x3[1],
+		  z = l0 * x0[2] + l1*x1[2] + l2*x2[2] + l3*x3[2];
+		
+		if (k>=numDofs)
+		  {
+		    std::cerr << "ddd" << std::endl;
+		    exit(1);
+		  }
+		flag[k]=true;
+		coo[3*k+0] = x;
+		coo[3*k+1] = y;
+		coo[3*k+2] = z;
+	      }
+	  }
+
+	bool invalid = false;
+	for (I i=0;i<numDofs;++i)
+	  {
+	    if (flag[i]==false)
+	      {
+		invalid = true;
+		std::cout << "invalid " << i << std::endl;
+	      }
+	  }
+
+	if (invalid)
+	  {
+	    exit(1);
+	  }
+	FILE * out = fopen("out.mesh","w");
+	fprintf(out,"MeshVersionFormatted\n1\nDimension\n3\nVertices\n" ifmt "\n",numDofs);
+#if 1
+	for (I i =0;i<numDofs;++i)
+	  {
+	    fprintf(out,"%e %e %e 0\n",coo[3*i+0],coo[3*i+1],coo[3*i+2]);
+	  }
+#endif	
+	I nbSubVolumes = TreilliVolume_get_nbSubvolumes	(treilli);
+	fprintf(out,"Tetrahedra\n" ifmt "\n",numTetrahedrons * nbSubVolumes);
+	I* subcnc=new I [4*nbSubVolumes];
+	TreilliVolume_get_cnc		(treilli,
+					 subcnc,
+					 4);
+	//	printf("allo "ifmt"\n",nbv);
+	//	exit(1);
+	for (I i = 0 ;i<numTetrahedrons;++i)
+	  {	    
+	    for (I j = 0 ;j<nbSubVolumes;++j)
+	      {
+		for (I k= 0;k<4;++k)
+		  {
+		    //	    std::cout << "yo " << 4*j+k<<std::endl;
+		    //		    std::cout << " " << subcnc[4*j+k];
+		    fprintf(out," " ifmt "",cellsToDofs[nbv*i+subcnc[4*j+k]]+1);
+		  }
+		fprintf(out," 0\n");
+		//	std::cout << std::endl;
+	      }
+	    //	    exit(1);
+	  }
+
+	fprintf(out,"End");
+	fclose(out);
+      }
+
+  };
+};
+
+
+int main(int 	argc_, 
+	 char* argv_[])
+{
+  
+  std::cout << ReferenceCell::Tetrahedron::GetNumEntities<TopologicalDimension::Node>() << std::endl;
+  std::cout << ReferenceCell::Tetrahedron::GetNumEntities<TopologicalDimension::Edge>() << std::endl;
+  std::cout << ReferenceCell::Tetrahedron::GetNumEntities<TopologicalDimension::Face>() << std::endl;
+  
+  for(const auto& edgeToNodes : ReferenceCell::Tetrahedron::EdgesToNodes)
+    {
+      for (const auto localNodeIndex : edgeToNodes)
+	{	  
+	  std::cout << " " << localNodeIndex;	  
+	}
+      std::cout << std::endl;
+    }
+
+  std::cout << ReferenceCell::Wedge::GetNumEntities<TopologicalDimension::Node>() << std::endl;
+  std::cout << ReferenceCell::Wedge::GetNumEntities<TopologicalDimension::Edge>() << std::endl;
+  std::cout << ReferenceCell::Wedge::GetNumEntities<TopologicalDimension::Face>() << std::endl;
+
+  
+  
+  
+  MnsFiniteElementSpace3D application(argc_,argv_);
+  application.Run();
+  return 0;
+}
+
+
+
+
+
+

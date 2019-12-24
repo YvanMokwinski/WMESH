@@ -1,0 +1,398 @@
+#pragma once
+
+#include "FiniteElement/Treilli/CRTP.hpp"
+#include "Mesh/Topology/eFaceShape.h"
+#include <array>
+namespace FiniteElement
+{
+  namespace Treilli
+  {
+    namespace Face
+    {
+      
+      template <Mesh::Topology::eFaceShape _faceShape,
+		unsigned int _degree>
+      class LagrangeBase;
+    };
+  
+  
+    template <Mesh::Topology::eFaceShape _faceShape,unsigned int _degree> struct Traits_CRTP<Face::LagrangeBase<_faceShape,_degree> >
+    {
+      typedef Mesh::Topology::eFaceShape eTypeShape;
+    };
+  
+    namespace Face
+    {
+    
+      template <Mesh::Topology::eFaceShape _faceShape,unsigned int _degree> struct Traits_LagrangeBase
+      {
+      };
+    
+      template <unsigned int _degree> struct Traits_LagrangeBase<Mesh::Topology::TRIANGLE,_degree>
+      {
+	static constexpr const unsigned int NumNodes 		= ( (_degree+1)*(_degree+2))/2;
+	static constexpr const unsigned int NumSubElements 	= _degree*_degree;
+	static constexpr const unsigned int Dimension 		= 2;    
+	static constexpr const unsigned int Degree 		= _degree;    
+	static constexpr const unsigned int NumNodesInFace	= 3;
+      };
+
+      template <unsigned int _degree> struct Traits_LagrangeBase<Mesh::Topology::QUADRILATERAL,_degree>
+      {
+	static constexpr const unsigned int NumNodes 		= (_degree+1)*(_degree+1);
+	static constexpr const unsigned int NumSubElements 	= _degree*_degree;
+	static constexpr const unsigned int Dimension 		= 2;    
+	static constexpr const unsigned int Degree 		= _degree;    
+	static constexpr const unsigned int NumNodesInFace	= 4;
+      };
+    
+      template <Mesh::Topology::eFaceShape _faceShape,unsigned int _degree> struct Utils
+      {	
+      };
+
+    
+      template <unsigned int _degree> struct Utils<Mesh::Topology::TRIANGLE,_degree>
+      {
+	using Traits = Traits_LagrangeBase<Mesh::Topology::TRIANGLE,_degree>;		
+	using tSubFacesToNodes = std::array< std::array<unsigned int, Traits::NumNodesInFace >, Traits::NumSubElements >;
+	using tNodesCoordinates = std::array< std::array<unsigned int, Traits::Dimension >, Traits::NumNodes >;
+	
+	static inline void ComputeSubcnc(tSubFacesToNodes & subcnc_)
+	{
+	  unsigned int subCellIndex = 0;
+#define _dec(_i,_j) (( (_i)+(_j) + 1 )*( (_i)+(_j) ))/2+(_i)
+	  for (unsigned int j=0;j<_degree;j++)
+	    {
+	    
+	      for (unsigned int i=0;i<j;i++)
+		{
+		 
+		  subcnc_[subCellIndex][0] = _dec(i,j-i);
+		  subcnc_[subCellIndex][1] = _dec(i+1,j-i);
+		  subcnc_[subCellIndex][2] = _dec(i,j+1-i); 
+		  ++subCellIndex;
+		
+		  subcnc_[subCellIndex][0] = _dec(i,j-i);
+		  subcnc_[subCellIndex][1] = _dec(i+1,j-1-i);
+		  subcnc_[subCellIndex][2] = _dec(i+1,j-i);
+		  ++subCellIndex;
+
+		}
+	    
+	      subcnc_[subCellIndex][0] = _dec(j,0);
+	      subcnc_[subCellIndex][1] = _dec(j+1,0);
+	      subcnc_[subCellIndex][2] = _dec(j,1);
+	      ++subCellIndex;
+	    }
+#undef _dec  
+	};
+      
+
+	static inline void ComputeCoordinates2(tNodesCoordinates& icoo_)
+	{
+	  // COMPUTE GRID     
+	  //	6 
+	  //	3 7
+	  //	1 4 8 
+	  //	0 2 5 9
+	  unsigned int nodeIndex = 0;
+	  for (unsigned int i=0;i<_degree+1;i++)
+	    {
+	      for (unsigned int j=0;j<=i;j++)
+		{
+		  icoo_[nodeIndex][0] = j;
+		  icoo_[nodeIndex][1] = i-j;
+		  ++nodeIndex;
+		}
+	    }
+	};
+
+	
+	static inline void ComputeCoordinates(tNodesCoordinates& icoo_)
+	{
+	  unsigned int nodeIndex = 0;
+	  // VERTEX 0 
+	  icoo_[nodeIndex][0] = 0;
+	  icoo_[nodeIndex][1] = 0;
+	  ++nodeIndex;
+	
+	  // VERTEX 1 
+	  icoo_[nodeIndex][0] = _degree;
+	  icoo_[nodeIndex][1] = 0;
+	  ++nodeIndex;
+
+	  // VERTEX 2
+	  icoo_[nodeIndex][0] = 0;
+	  icoo_[nodeIndex][1] = _degree;
+	  ++nodeIndex;
+	    
+	  // EDGE 0 
+	  for (unsigned int i=0;i<_degree - 1;++i)
+	    {
+	      icoo_[nodeIndex][0] = i+1;
+	      icoo_[nodeIndex][1] = 0;
+	      ++nodeIndex;
+	    }
+	  // EDGE 1 
+	  for (unsigned int i=0;i<_degree-1;++i)
+	    {
+	      icoo_[nodeIndex][0] = _degree-(i+1); 
+	      icoo_[nodeIndex][1] = i+1;
+	      ++nodeIndex;
+	    }
+	  // EDGE 2 
+	  for (unsigned int i=0;i<_degree-1;++i)
+	    {
+	      icoo_[nodeIndex][0] = 0;	  
+	      icoo_[nodeIndex][1] = _degree-(i+1);
+	      ++nodeIndex;
+	    }
+	  // INTERIOR
+	  for (unsigned int i=0;i<_degree - 1;++i)
+	    {
+	      for (unsigned int j=0;j<_degree-i-2;++j)
+		{
+		  icoo_[nodeIndex][0] = i + 1;
+		  icoo_[nodeIndex][1] = j + 1;
+		  ++nodeIndex;
+		}
+	    }
+	};
+	  
+      };
+
+
+      template <unsigned int _degree> struct Utils<Mesh::Topology::QUADRILATERAL,_degree>
+      {
+	using Traits = Traits_LagrangeBase<Mesh::Topology::QUADRILATERAL,_degree>;		
+	using tSubFacesToNodes = std::array< std::array<unsigned int, Traits::NumNodesInFace >, Traits::NumSubElements >;
+	using tNodesCoordinates = std::array< std::array<unsigned int, Traits::Dimension >, Traits::NumNodes >;
+	
+	static inline void ComputeSubcnc(tSubFacesToNodes& subcnc_)
+	{
+	  unsigned int subCellIndex = 0;
+	  // COMPUTE CNC
+#define _dec(_i,_j)   (_degree+1) * (_i) + (_j) 
+	  { 
+	    for (unsigned int i=0;i<_degree;i++)
+	      {
+		for (unsigned int j=0;j<_degree;j++)
+		  {		    
+		    subcnc_[subCellIndex][0] = _dec( (i+1), (j+1) );
+		    subcnc_[subCellIndex][1] = _dec( (i), (j+1) );
+		    subcnc_[subCellIndex][2] = _dec( (i), (j) );
+		    subcnc_[subCellIndex][3] = _dec( (i+1), (j) );
+		    ++subCellIndex;
+		  } 
+	      }
+	  }
+#undef _dec
+	};
+      
+
+	static inline void ComputeCoordinates2(tNodesCoordinates& icoo_)
+	{
+	  for (unsigned int i=0;i<_degree+1;++i)
+	    {
+	      for (unsigned int j=0;j<_degree+1;j++)
+		{
+		  icoo_[i*(_degree+1)+j][0] = i;	  
+		  icoo_[i*(_degree+1)+j][1] = j;	
+		}
+	    }
+	};
+
+
+	static inline void ComputeCoordinates(tNodesCoordinates& icoo_)
+	{
+	  unsigned int nodeIndex = 0;
+	
+	  icoo_[nodeIndex][0] = 0;	  
+	  icoo_[nodeIndex][1] = 0;	
+	  ++nodeIndex;
+	
+	  icoo_[nodeIndex][0] = _degree;	  
+	  icoo_[nodeIndex][1] = 0;	
+	  ++nodeIndex;
+		
+	  icoo_[nodeIndex][0] = _degree;	  
+	  icoo_[nodeIndex][1] = _degree;	
+	  ++nodeIndex;
+		
+	  icoo_[nodeIndex][0] = 0;	  
+	  icoo_[nodeIndex][1] = _degree;	
+	  ++nodeIndex;
+		
+	  /* EDGE 0 */
+	  for (unsigned int i=1;i<_degree;++i)
+	    {
+	      icoo_[nodeIndex][0] = i;	  
+	      icoo_[nodeIndex][1] = 0;
+	      ++nodeIndex;
+	    }
+	
+	  /* EDGE 1 */
+	  for (unsigned int i=1;i<_degree;++i)
+	    {
+	      icoo_[nodeIndex][0] = _degree;	  
+	      icoo_[nodeIndex][1] = i;
+	      ++nodeIndex;
+	    } 
+	
+	  /* EDGE 2 */
+	  for (unsigned int i=0;i<_degree-1;++i)
+	    {
+	      icoo_[nodeIndex][0] = _degree - i - 1;	  
+	      icoo_[nodeIndex][1] = _degree;	
+	      ++nodeIndex;
+	    }
+
+	  /* EDGE 3 */
+	  for (unsigned int i=0;i<_degree-1;++i)
+	    {
+	      icoo_[nodeIndex][0] = 0;	  
+	      icoo_[nodeIndex][1] = _degree - i - 1;	
+	      ++nodeIndex;
+	    }
+	
+	  /* INSIDE */
+	  for (unsigned int i=1;i<_degree;++i)
+	    {
+	      for (unsigned int j=1;j<_degree;j++)
+		{			  
+		  icoo_[nodeIndex][0] = i;
+		  icoo_[nodeIndex][1] = j;	
+		  ++nodeIndex;
+		} 
+	    }
+	  
+	};
+
+      };
+
+
+
+      template <Mesh::Topology::eFaceShape _faceShape,unsigned int _degree>
+      class LagrangeBase : public CRTP<LagrangeBase<_faceShape,_degree> > 
+      {
+      
+      private: using BaseClass = CRTP<LagrangeBase<_faceShape,_degree> >;
+      private: using eTypeShape = typename BaseClass::eTypeShape;      
+      private: using Traits = Traits_LagrangeBase<_faceShape,_degree>;
+      private: using tSubFacesToNodes = std::array< std::array<unsigned int, Traits::NumNodesInFace >, Traits::NumSubElements >;
+      private: using tNodesCoordinates = std::array< std::array<unsigned int, Traits::Dimension >, Traits::NumNodes >;
+      
+      private: static constexpr const unsigned int s_numNodes 	= Traits::NumNodes;
+      private: static constexpr const unsigned int s_numElements 	= Traits::NumSubElements;
+      private: static constexpr const unsigned int s_dimension 	= Traits::Dimension;
+      private: static constexpr const unsigned int s_degree 	= Traits::Degree;
+      private: static constexpr const unsigned int s_numNodesInFace	= Traits::NumNodesInFace;
+
+      private: tNodesCoordinates m_icoo;
+      private: tSubFacesToNodes m_subcnc;
+      
+      public: inline unsigned int 	GetDegree() 		const noexcept { return s_degree; };
+      public: inline unsigned int 	GetDimension() 		const noexcept { return s_dimension; };
+      public: inline unsigned int 	GetNumNodes() 		const noexcept { return s_numNodes; };    
+      public: inline unsigned int 	GetNumSubElements() 	const noexcept { return s_numElements; };
+      public: inline eTypeShape		GetShape()		const noexcept { return _faceShape; };
+      public: inline unsigned int 	GetNumNodesInCell() 	const noexcept { return s_numNodesInFace; };    
+
+#if 0      
+      public: template <typename _float_type> inline _float_type GetCoordinate(const unsigned int nodeIndex_,
+									       const unsigned int dimensionIndex_) const noexcept
+	{
+	  static constexpr const _float_type idegree = _float_type(1.0) / _float_type(_degree);
+#ifndef NDEBUG
+	  Debug::IsInRange(__TRACE__,nodeIndex_,(unsigned int)0,this->s_numNodes-1);
+	  Debug::IsInRange(__TRACE__,dimensionIndex_,(unsigned int)0,this->s_dimension-1);
+#endif      
+	  return _float_type(this->m_icoo[nodeIndex_][dimensionIndex_]) * idegree;
+	};
+#endif
+	
+      public: inline unsigned int GetNodeIndex(const unsigned int&subElementIndex_,
+					       const unsigned int&localNodeIndex_) const noexcept
+	{
+#ifndef NDEBUG
+	  Debug::IsInRange(__TRACE__,subElementIndex_,(unsigned int)0,this->s_numElements-1);
+	  Debug::IsInRange(__TRACE__,localNodeIndex_,(unsigned int)0,this->s_numNodesInFace-1);
+#endif
+	  return this->m_subcnc[subElementIndex_][localNodeIndex_];
+	};
+      
+      public: inline LagrangeBase() noexcept
+	{		
+	
+	  // COMPUTE COORDINATES
+	  Utils<_faceShape,_degree>::ComputeCoordinates(this->m_icoo);
+	
+	  std::array<unsigned int,(_degree+1)*(_degree+1)> perm;
+	  tNodesCoordinates  ilagr;
+	  {
+	    Utils<_faceShape,_degree>::ComputeCoordinates2(ilagr);
+	  
+	    for (unsigned int i=0;i<s_numNodes;++i)
+	      {	
+		perm[ this->m_icoo[i][0] * (_degree+1) + this->m_icoo[i][1] ] = i+1;
+	      } 
+	  
+	    Utils<_faceShape,_degree>::ComputeSubcnc(this->m_subcnc);
+	  
+	    for (unsigned int subElementIndex=0;subElementIndex<s_numElements;++subElementIndex)
+	      {
+		for (unsigned int iv=0;iv<s_numNodesInFace;++iv)
+		  {	  
+		    const unsigned int l 				= m_subcnc[subElementIndex][iv];
+		    const unsigned int i 				= ilagr[l][0];
+		    const unsigned int j 				= ilagr[l][1];
+		    m_subcnc[subElementIndex][iv] = perm[(_degree+1)*i+j]-1;
+		  }
+	      }
+	  }
+	
+	};
+    
+	inline ~LagrangeBase() noexcept
+	{
+	};
+    
+      };
+    
+
+      
+
+      
+    
+      template <Mesh::Topology::eFaceShape _faceShape,unsigned int _degree>
+      class Lagrange : public LagrangeBase<_faceShape,_degree>
+      {
+      
+      public: template <typename _float_type> inline _float_type GetCoordinate(const unsigned int nodeIndex_,
+									       const unsigned int dimensionIndex_) const noexcept
+	{
+	  std::cout << "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy" << std::endl;
+	  static constexpr const _float_type idegree = _float_type(1.0) / _float_type(_degree);
+#ifndef NDEBUG
+	  Debug::IsInRange(__TRACE__,nodeIndex_,(unsigned int)0,this->s_numNodes-1);
+	  Debug::IsInRange(__TRACE__,dimensionIndex_,(unsigned int)0,this->s_dimension-1);
+#endif      
+	  return _float_type(this->m_icoo[nodeIndex_][dimensionIndex_]) * idegree;
+	};
+            
+      public: inline Lagrange() noexcept
+	{  	
+	};
+    
+	inline ~Lagrange() noexcept
+	{
+	};
+    
+      };
+    
+    };
+  
+  };
+
+};
+

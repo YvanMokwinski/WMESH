@@ -1,0 +1,217 @@
+#pragma once
+
+
+#include <string>
+#include "ReferenceCell.hpp"
+
+namespace OutputFile
+{
+  class Vtk
+  {      
+  protected: std::string m_filename;
+  protected: std::ofstream m_out;
+    
+  public : Vtk(const std::string& filename_)
+    : m_filename(filename_+".vtk"),
+      m_out(m_filename.c_str()) 
+    {
+      this->m_out.precision(15);
+      this->m_out.setf(std::ios::scientific);
+    };
+    
+    virtual ~Vtk()
+    {
+      this->m_out.close();
+    };
+    
+    template <typename _type> Vtk& operator<<(const _type &type_)
+    {
+      m_out << type_;
+      return *this;
+    };
+  };
+  
+  typedef enum __eVtkElement{ ERROR=0,
+			      VERTEX=1,
+			      POLYVERTEX=2,
+			      LINE=3,
+			      POLYLINE=4,
+			      TRIANGLE=5,
+			      TRIANGLE_STRIP=6,
+			      POLYGON=7,
+			      PIXEL=8,
+			      QUAD=9,
+			      TETRA=10,
+			      VOXEL=11,
+			      HEXA=12,
+			      WEDGE=13,
+			      PYRAMID=14,
+			      QUADRATICEDGE=21,
+			      QUADRATICTRIANGLE=22,
+			      QUADRATICQUAD=23,
+			      QUADRATICTETRA=24,
+			      QUADRATICHEXA=25,
+			      ALL} eVtkElement;
+
+  inline std::ostream& operator<< (std::ostream &out_,
+				   const ReferenceCell::FaceType::EnumType &faceType_)  noexcept
+  {
+    switch(faceType_)
+      {	  
+      case ReferenceCell::FaceType::Quadrilateral:
+	{
+	  out_ << QUAD;
+	  break;
+	}
+      case ReferenceCell::FaceType::Triangle:
+	{
+	  out_ << TRIANGLE;
+	  break;
+	}
+      }
+    return out_;
+  };  
+    
+  inline std::ostream& operator<< (std::ostream &out_,
+				   const ReferenceCell::Volume::EnumType &volumeType_) noexcept
+  {
+    switch(volumeType_)
+      {
+      case ReferenceCell::Volume::Tetrahedron:
+	{
+	  out_ << TETRA;
+	  break;
+	}
+      case ReferenceCell::Volume::Wedge:
+	{
+	  out_ << WEDGE;
+	  break;
+	}
+      case ReferenceCell::Volume::Hexahedron:
+	{
+	  out_ << HEXA;
+	  break;
+	}
+	  
+      case ReferenceCell::Volume::Pyramid:
+	{
+	  out_ << PYRAMID;
+	  break;
+	}
+      }
+    return out_;
+  };  
+
+#if 0
+  template <typename _derivedClass> std::ostream& operator<< (std::ostream &out_, 
+							      const FiniteElement::CRTP_Treilli<_derivedClass> &treilli_)    
+  {
+    const unsigned int numNodes	= treilli_.GetNumNodes();
+    const unsigned int dimension	= treilli_.GetDimension();
+
+    out_ << "# vtk DataFile Version 3.0" << std::endl;
+    out_ << "vtk output" << std::endl;
+    out_ << "ASCII" << std::endl;
+    out_ << "DATASET UNSTRUCTURED_GRID" << std::endl;
+    out_ << "POINTS " << numNodes << " double" << std::endl;
+	
+    for (unsigned int nodeIndex=0;nodeIndex<numNodes;++nodeIndex)
+      {
+	out_ << treilli_.template GetCoordinate<double>(nodeIndex,0);
+	for (unsigned int dimensionIndex=1;dimensionIndex<dimension;++dimensionIndex)
+	  out_ << " " 
+	       << treilli_.template GetCoordinate<double>(nodeIndex,dimensionIndex);	
+	for (unsigned int dimensionIndex=dimension;dimensionIndex<3;++dimensionIndex)
+	  out_ << " " 
+	       << 0.0;	
+	out_ << std::endl;
+      }
+
+    const unsigned int numNodesInCell = treilli_.GetNumNodesInCell();
+    const unsigned int numSubCells = treilli_.GetNumSubElements();
+    out_ << "CELLS " << numSubCells << " " <<  numSubCells*( 1 + numNodesInCell ) << std::endl;
+
+    for (unsigned int cellIndex=0;cellIndex<numSubCells;++cellIndex)
+      {	
+	out_ << numNodesInCell;
+	for (unsigned int i=0;i<numNodesInCell;++i)
+	  out_ << " " 
+	       << treilli_.GetNodeIndex(cellIndex,i);
+	out_ << std::endl;
+      }
+		
+    out_ << "CELL_TYPES " << numSubCells << std::endl;
+    for (unsigned int cellIndex=0;cellIndex<numSubCells;++cellIndex)
+      {
+	out_ << treilli_.GetShape() << std::endl;
+      }
+    return out_;
+  };  
+#endif
+
+
+#if 0
+  template <typename _derivedClass>  std::ostream& operator<< (std::ostream &out_,
+							       const CRTP_ReadOnlyMesh<_derivedClass> &mesh_)
+  {
+    const unsigned int dimension 	= mesh_.GetGeometryDimension();
+    const I numVertices  		= mesh_.GetNumVertices();
+    typedef typename CRTP_ReadOnlyMesh<_derivedClass>::PointType PointType;
+    PointType p;
+      
+    out_ << "# vtk DataFile Version 3.0" << std::endl;
+    out_ << "vtk output" << std::endl;
+    out_ << "ASCII" << std::endl;
+    out_ << "DATASET UNSTRUCTURED_GRID" << std::endl;
+    out_ << "POINTS " << numVertices << " double" << std::endl;
+      
+    for (I vertexIndex=0;vertexIndex<numVertices;++vertexIndex)
+      {
+	mesh_.GetVertex(vertexIndex,p);	 
+	out_ << p.Get(0);
+	for (unsigned int i=1;i<dimension;++i)
+	  out_ << " " << p.Get(i);
+	for (unsigned int i=dimension;i<3;++i)
+	  out_ << " " << 0.0;
+      }
+      
+      
+    I total_numCellsData = 0;
+    I total_numCells = 0;
+    for (unsigned int topologyIndex=0;topologyIndex<mesh_.GetNumZones();++topologyIndex)
+      {
+	const MeshTopology * topology = mesh_.GetMeshTopology(topologyIndex);
+	total_numCells += topology->GetNumCells();
+	total_numCellsData += 8;
+      }
+      
+    out_ << "CELLS " << total_numCells << " " <<  total_numCellsData << std::endl;
+    for (unsigned int topologyIndex=0;topologyIndex<mesh_.GetNumZones();++topologyIndex)
+      {
+	const MeshTopology * topology 	= mesh_.GetMeshTopology(topologyIndex);
+	const I numCells 			= topology->GetNumCells();
+	for (I cellIndex=0;cellIndex < numCells;++cellIndex)
+	  {
+	    topology->GetCellToNodes(cellIndex,cnc);
+	    out_ << "8";
+	    for (unsigned int localNodeIndex=0;localNodeIndex<8;++localNodeIndex)
+	      out_ << " " << cnc[localNodeIndex];
+	    out_ << std::endl;
+	  }
+      }
+      
+    out_ << "CELL_TYPES " << totalNumCells << std::endl;
+    for (unsigned int topologyIndex=0;topologyIndex<mesh_.GetNumZones();++topologyIndex)
+      {
+	const MeshTopology * topology 	= mesh_.GetMeshTopology(topologyIndex);
+	const I numCells 			= topology->GetNumCells();
+	for (unsigned int cellIndex=0;cellIndex<numSubCells;++cellIndex)
+	  {
+	    out_ << treilli_.GetShape() << std::endl;
+	  }
+      }
+    return out_;
+  };
+#endif
+
+};
